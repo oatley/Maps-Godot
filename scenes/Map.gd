@@ -195,8 +195,8 @@ func gen_map():
   map_store[map_name] = false
   mutex.unlock()
   #gen_map.godot_new_map(map_path + map_name + ".map")
-  #gen_map.godot_new_biome(map_path + map_name + ".map", "Ocean")
-  gen_map.godot_random_biome(map_path + map_name + ".map")
+  gen_map.godot_new_biome(map_path + map_name + ".map", "Cave")
+  #gen_map.godot_random_biome(map_path + map_name + ".map")
   mutex.lock()
   map_store[map_name] = true
   mutex.unlock()

@@ -86,7 +86,7 @@ impl Map {
         // Convert godot string to rust string
         let file_name = godot_file_name.to_string();
         let biome_name = godot_biome_name.to_string();
-        let m = Map::new_biome(100, 100, biome_name);
+        let m = Map::new_biome(50, 50, biome_name);
         Map::save_map(&file_name.to_string(), &m, false);
     }
 
@@ -102,10 +102,10 @@ impl Map {
         } else if random_biome == 2 {
             biome_name = String::from("Underlake");
         } else {
-            biome_name = String::from("Terrible_place_to_be");
+            biome_name = String::from("Cave");
         }
         let file_name = godot_file_name.to_string();
-        let m = Map::new_biome(100, 100, biome_name);
+        let m = Map::new_biome(50, 50, biome_name);
         Map::save_map(&file_name.to_string(), &m, false);
     }
 
@@ -132,8 +132,8 @@ impl Map {
         // - pass_?: ???
 
         // Temporary arguments
-        let sizex = 50;
-        let sizey = 50;
+        //let sizex = 50;
+        //let sizey = 50;
         let mut rng = rand::thread_rng();
         let number_of_regions = rng.gen_range(sizex+sizey, (sizex+sizey)*2);
 
@@ -141,9 +141,10 @@ impl Map {
         let mut tile_chance;
         let mut biome_control;
         // Prepare the biome data, does NOT enforce tile percentage
+        // BUG BUG BUG: if two tiles have same value, one will be ignored... Bug in Tile::new_random()
         if biome_name == "Cave" {
-            tile_chance = TileChance{floor: 50, wall: 45, water: 5};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true};
+            tile_chance = TileChance{floor: 65, wall: 35, water: 0};
+            biome_control = BiomeControl{outer_wall: false, water_edges: false};
         } else if biome_name == "Ocean" {
             tile_chance = TileChance{floor: 5, wall: 5, water: 90};
             biome_control = BiomeControl{outer_wall: false, water_edges: true};
@@ -161,7 +162,7 @@ impl Map {
         // Pass 2: generate empty tileset
         tileset = Map::empty_tileset(sizex, sizey);
         // Pass 3: convert empty tileset to closest voronoi regions
-        tileset = Map::tiles_to_voronoi(tileset, voronoi_regions, number_of_regions); // BROKEN
+        tileset = Map::tiles_to_voronoi(tileset, voronoi_regions, number_of_regions);
         // Pass 4: update neighbors of each tile (include corners)
         tileset = Map::update_all_neighbors(sizex, sizey, tileset);
         // Pass 5: make sure all tiles around water are floor
@@ -250,23 +251,25 @@ impl Map {
         for tile_key in tileset.keys() {
             let x = tileset[tile_key].x;
             let y = tileset[tile_key].y;
-            if x <= 1 || y <= 1 || x >= sizex-1 || y >= sizey-1 {
-                continue;
-            }
             let tile_type = tileset[tile_key].c;
-            let neighbors: Vec<String> = vec![
-                // Sides
-                (y + 1).to_string() + "x" + &(x).to_string(),
-                (y - 1).to_string() + "x" + &(x).to_string(),
-                (y).to_string() + "x" + &(x + 1).to_string(),
-                (y).to_string() + "x" + &(x - 1).to_string(),
-                // Corners
-                (y + 1).to_string() + "x" + &(x + 1).to_string(),
-                (y - 1).to_string() + "x" + &(x - 1).to_string(),
-                (y + 1).to_string() + "x" + &(x - 1).to_string(),
-                (y - 1).to_string() + "x" + &(x + 1).to_string()
-            ];
-            let new_tile = Tile::new(y, x, tile_type, neighbors);
+            let new_tile;
+            if x <= 1 || y <= 1 || x >= sizex-1 || y >= sizey-1 {
+                new_tile = Tile::new(y, x, tile_type, Vec::new());
+            } else {
+                let neighbors: Vec<String> = vec![
+                    // Sides
+                    (y + 1).to_string() + "x" + &(x).to_string(),
+                    (y - 1).to_string() + "x" + &(x).to_string(),
+                    (y).to_string() + "x" + &(x + 1).to_string(),
+                    (y).to_string() + "x" + &(x - 1).to_string(),
+                    // Corners
+                    (y + 1).to_string() + "x" + &(x + 1).to_string(),
+                    (y - 1).to_string() + "x" + &(x - 1).to_string(),
+                    (y + 1).to_string() + "x" + &(x - 1).to_string(),
+                    (y - 1).to_string() + "x" + &(x + 1).to_string()
+                ];
+                new_tile = Tile::new(y, x, tile_type, neighbors);
+            }
             new_tileset.insert(tile_key.to_string(), new_tile);
         }
         new_tileset
@@ -278,17 +281,19 @@ impl Map {
         for tile_key in tileset.keys() {
             let y = tileset[tile_key].y;
             let x = tileset[tile_key].x;
-            if x <= 2 || y <= 2 || x >= sizex-2 || y >= sizey-2 {
-                continue;
-            }
             let mut tile_type = tileset[tile_key].c;
             let neighbors = tileset[tile_key].neighbors.clone();
-            for neighbor_key in neighbors.clone() {
-                if tileset[tile_key].c == TILE_TYPE.water && tileset[&neighbor_key].c == TILE_TYPE.wall {
-                    tile_type = TILE_TYPE.floor;
+            let new_tile;
+            if x <= 2 || y <= 2 || x >= sizex-2 || y >= sizey-2 {
+                new_tile = Tile::new(y, x, tile_type, neighbors);
+            } else {
+                for neighbor_key in neighbors.clone() {
+                    if tileset[tile_key].c == TILE_TYPE.water && tileset[&neighbor_key].c == TILE_TYPE.wall {
+                        tile_type = TILE_TYPE.floor;
+                    }
                 }
+                new_tile = Tile::new(y, x, tile_type, neighbors);
             }
-            let new_tile = Tile::new(y, x, tile_type, neighbors);
             new_tileset.insert(tile_key.to_string(), new_tile);
         }
         tileset
@@ -301,13 +306,13 @@ impl Map {
             let y = tileset[tile_key].y;
             let x = tileset[tile_key].x;
             let neighbors = tileset[tile_key].neighbors.clone();
+            let new_tile;
             if x == 0 || y == 0 || x == sizex-1 || y == sizey-1 {
-                let new_tile = Tile::new(y, x, TILE_TYPE.wall, neighbors);
-                new_tileset.insert(tile_key.to_string(), new_tile);
+                new_tile = Tile::new(y, x, TILE_TYPE.wall, neighbors);
             } else {
-                let old_tile = tileset[tile_key].clone();
-                new_tileset.insert(tile_key.to_string(), old_tile);
+                new_tile = tileset[tile_key].clone();
             }
+            new_tileset.insert(tile_key.to_string(), new_tile);
         }
         new_tileset
     }
