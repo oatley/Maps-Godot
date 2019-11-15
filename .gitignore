@@ -1,4 +1,6 @@
 /target
+/.import
 **/*.rs.bk
 Cargo.lock
 *.import
+
