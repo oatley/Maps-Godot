@@ -1,0 +1,27 @@
+[gd_scene load_steps=4 format=2]
+
+[ext_resource path="res://resources/2d/blue_circle.png" type="Texture" id=1]
+[ext_resource path="res://scenes/Sprite.gd" type="Script" id=2]
+[ext_resource path="res://resources/2d/light.png" type="Texture" id=3]
+
+[node name="Player" type="Sprite"]
+scale = Vector2( 0.5, 0.5 )
+texture = ExtResource( 1 )
+centered = false
+script = ExtResource( 2 )
+
+[node name="Camera2D" type="Camera2D" parent="."]
+current = true
+limit_smoothed = true
+drag_margin_h_enabled = false
+drag_margin_v_enabled = false
+smoothing_enabled = true
+
+[node name="Light2D" type="Light2D" parent="."]
+texture = ExtResource( 3 )
+offset = Vector2( 32, 64 )
+mode = 2
+shadow_enabled = true
+shadow_filter = 5
+shadow_filter_smooth = 15.0
+

@@ -1,0 +1,6 @@
+[gd_scene format=2]
+
+[node name="CanvasModulate" type="CanvasModulate"]
+visible = false
+color = Color( 0.137255, 0.137255, 0.137255, 1 )
+

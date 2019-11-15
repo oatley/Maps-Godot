@@ -1,0 +1,25 @@
+[package]
+name = "maps"
+version = "0.1.0"
+authors = ["Andrew Oatley-Willis <oatleywillisa@gmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Debug
+#[lib]
+#name = "maps"
+#path = "src/lib.rs"
+#[[bin]]
+#name = "maps"
+#path = "src/main.rs"
+
+
+[dependencies]
+gdnative = { git = "https://github.com/GodotNativeTools/godot-rust" }
+rand = "0.3.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.2.1"
+flate2 = "1.0"

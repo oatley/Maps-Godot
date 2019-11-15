@@ -1,0 +1,25 @@
+[gd_scene load_steps=6 format=2]
+
+[ext_resource path="res://scenes/GUI.tscn" type="PackedScene" id=1]
+[ext_resource path="res://scenes/Map.gd" type="Script" id=2]
+[ext_resource path="res://scenes/CanvasModulate.tscn" type="PackedScene" id=3]
+[ext_resource path="res://Maps.gdns" type="Script" id=4]
+[ext_resource path="res://scenes/Cleanup.gd" type="Script" id=5]
+
+[node name="Main" type="Node2D"]
+position = Vector2( 0, 1.05263 )
+
+[node name="GUI" parent="." instance=ExtResource( 1 )]
+margin_bottom = 182.0
+
+[node name="Map" type="Node2D" parent="."]
+script = ExtResource( 2 )
+
+[node name="CanvasModulate" parent="Map" instance=ExtResource( 3 )]
+
+[node name="Parent" type="Node" parent="."]
+script = ExtResource( 4 )
+
+[node name="Cleanup" type="Node" parent="."]
+script = ExtResource( 5 )
+
