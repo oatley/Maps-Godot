@@ -34,28 +34,25 @@ func _thread_clean_map(userdata):
     var should_exit = exit_thread # Protect with Mutex.
     mutex.unlock()
     if should_exit:
-      print("exiting thread")
+      print("[THREAD_cleanup]-> exiting thread")
       break
       
-    print("starting thread CLEAN")
+    print("[THREAD_cleanup]-> starting thread CLEAN")
 #    mutex.lock()
 #    thread_counter += 1
 #    mutex.unlock()
     # Do work here:
-    print("CLEANING?1")
     var map_child = get_node("/root/Main/Map/" + clean_map_file_name)
     var map_children = map_child.get_children()
-    print("CLEANING?2")
     #map.player.queue_free()
-    print("CLEANING?3")
     call_deferred("free", map_child)
-    print("CLEAN: map free")
+    print("[THREAD_cleanup]-> map free")
     for child in map_children:
       if child:
         call_deferred("free", child)
     #map_child.queue_free()
     print(map_child, map_child.get_children())
-    print("thread finished CLEAN")
+    print("[THREAD_cleanup]-> thread finished")
 
 
 func _exit_tree():
@@ -69,7 +66,7 @@ func _exit_tree():
 
     # Wait until it exits.
     thread.wait_to_finish()
-    print("remaining threads: ", get_thread_counter())
+    print("[THREAD_cleanup]-> remaining threads: ", get_thread_counter())
    
 func get_thread_busy():
   mutex.lock()

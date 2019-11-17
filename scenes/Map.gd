@@ -15,7 +15,7 @@ var tile_size = 32 # Sprite size
 var player
 var rust_map_name = "test101.map"
 
-var map_store = {}
+var map_store = {} # map_store[map_name][ready(bool)/biome(string)]
 var thread_counter = 0
 var mutex
 var thread
@@ -95,14 +95,14 @@ func _thread_gen_map(userdata):
     mutex.unlock()
     
     if should_exit:
-      print("exiting thread")
+      print("[THREAD_gen_map]-> exiting thread")
       break
-    print("starting thread")
+    print("[THREAD_gen_map]-> starting thread")
     mutex.lock()
     thread_counter += 1
     mutex.unlock()
     gen_map()
-    print("thread finished")
+    print("[THREAD_gen_map]-> thread finished")
   
   
   
@@ -160,13 +160,20 @@ func play_vd():
 func play_tiles():
   """show tiles"""
   #gen_map()
-  if not load_map():
+  var biome = load_map()
+  if biome == "fail":
+    print("[MAIN]-> exiting play_tiles failure")
     return
   gui.hide()
   draw_map_tiles()
   add_player()
-  $CanvasModulate.hide()
-  #$CanvasModulate.show()
+  if biome == "Ocean":
+    #var p = get_node("/root/Main/Map/Player/Light2D")
+    #p.texture_scale = 5.0
+    #$CanvasModulate.show()
+    $CanvasModulate.hide()
+  else:
+    $CanvasModulate.show()
   #get_node("/root/Main/Map/" + file_name + "canvas_mod").show()
   
 # Give string tell me if file exists
@@ -192,15 +199,17 @@ func gen_map():
   var map_path = "resources/maps/"
   var map_name = "f" + str(map_count)
   mutex.lock()
-  map_store[map_name] = false
+  map_store[map_name] = {}
+  map_store[map_name]["ready"] = false # Fix123
   mutex.unlock()
   #gen_map.godot_new_map(map_path + map_name + ".map")
-  gen_map.godot_new_biome(map_path + map_name + ".map", "Cave")
-  #gen_map.godot_random_biome(map_path + map_name + ".map")
+  #gen_map.godot_new_biome(map_path + map_name + ".map", "Cave")
+  var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
   mutex.lock()
-  map_store[map_name] = true
+  map_store[map_name]["biome"] = biome # Fix123
+  map_store[map_name]["ready"] = true # Fix123
   mutex.unlock()
-  print(map_store)
+  print("[THREAD_gen_map]-> ", map_store)
   #gen_map.godot_save_map(rust_map_name)
 
 # Loads the map in var map
@@ -208,24 +217,25 @@ func load_map():
   # If there are no maps to load, fail to load
   if len(map_store) < 1:
     print("map store empty... please wait...")
-    return false
+    return "fail"
   var f = File.new()
   #f.open("res://resources/maps/50vc11.map", f.READ)
   for key in map_store.keys():
-    if map_store[key]:
+    if map_store[key]["ready"]: #Fix123
       file_name = key
       print("file found: " + key)
       break
   # If you find no valid maps, fail to load
   if file_name == "":
     print("no file found")
-    return false
-  if not map_store[file_name]:
+    return "fail"
+  if not map_store[file_name]["ready"]: # Fix123
     print("map is not available")
-    return false
+    return "fail"
   # Let thread know you are using it's dictionary
   mutex.lock()
-  map_store[file_name] = false
+  map_store[file_name]["ready"] = false #Fix123
+  var biome = map_store[file_name]["biome"]
   mutex.unlock()
   f.open("res://resources/maps/" + file_name + ".map", f.READ)
   var json_string = f.get_as_text()
@@ -234,8 +244,8 @@ func load_map():
     map = json.result
     extract_vd_points() # extract voronoi regions from map
   else:
-    print("error with json")
-  return true
+    print("error with json") 
+  return biome
 
 # Extract vd_points
 func extract_vd_points():

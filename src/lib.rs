@@ -4,7 +4,7 @@ extern crate gdnative;
 extern crate rand;
 extern crate serde;
 extern crate serde_json;
-extern crate regex;
+//extern crate regex;
 extern crate flate2;
 
 use gdnative::*;
@@ -15,8 +15,8 @@ use serde::{Serialize, Deserialize};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufWriter;
-use std::path::Path;
-use regex::RegexSet;
+//use std::path::Path;
+//use regex::RegexSet;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 use flate2::Compression;
@@ -36,9 +36,9 @@ pub struct Tile { // Individual tile data, stored in Map struct HashMap
     pub neighbors: Vec<String> // this will store a key to game_objects, for each neighbor tiles
 }
 pub struct TileChance { // Used to control the biome tiles on map
-    pub floor: i32, // percentage of map floor
-    pub wall: i32,  // percentage of map wall
-    pub water: i32 // percentage of map water
+    pub floor: f32, // percentage of map floor
+    pub wall: f32,  // percentage of map wall
+    pub water: f32 // percentage of map water
 }
 pub struct BiomeControl { // Used to control advanced biome manipulation
     pub water_edges: bool, // Activate method add_water_edges(), makes floor around water
@@ -91,9 +91,9 @@ impl Map {
     }
 
     #[export]
-    unsafe fn godot_random_biome(&self, _owner: Node, godot_file_name: GodotString) {
+    unsafe fn godot_random_biome(&self, _owner: Node, godot_file_name: GodotString) -> GodotString {
         let mut rng = rand::thread_rng();
-        let random_biome = rng.gen_range(0, 4);
+        let random_biome = rng.gen_range(0, 3);
         let biome_name;
         if random_biome == 0 {
             biome_name = String::from("Cave");
@@ -105,8 +105,10 @@ impl Map {
             biome_name = String::from("Cave");
         }
         let file_name = godot_file_name.to_string();
-        let m = Map::new_biome(50, 50, biome_name);
+        let m = Map::new_biome(50, 50, biome_name.clone());
         Map::save_map(&file_name.to_string(), &m, false);
+        // Return the random biome to godot for logging
+        GodotString::from_str(&biome_name)
     }
 
     // Generate new map of a specific biome
@@ -138,34 +140,35 @@ impl Map {
         let number_of_regions = rng.gen_range(sizex+sizey, (sizex+sizey)*2);
 
         //let mut map_objects = HashMap::new();
-        let mut tile_chance;
-        let mut biome_control;
+        let tile_chance;
+        let biome_control;
         // Prepare the biome data, does NOT enforce tile percentage
         // BUG BUG BUG: if two tiles have same value, one will be ignored... Bug in Tile::new_random()
         if biome_name == "Cave" {
-            tile_chance = TileChance{floor: 65, wall: 35, water: 0};
-            biome_control = BiomeControl{outer_wall: false, water_edges: false};
+            tile_chance = TileChance{floor: 0.65, wall: 0.3, water: 0.05};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true};
         } else if biome_name == "Ocean" {
-            tile_chance = TileChance{floor: 5, wall: 5, water: 90};
+            tile_chance = TileChance{floor: 0.05, wall: 0.05, water: 0.9};
             biome_control = BiomeControl{outer_wall: false, water_edges: true};
         } else if biome_name == "Underlake" {
-            tile_chance = TileChance{floor: 20, wall: 20, water: 60};
+            tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6};
             biome_control = BiomeControl{outer_wall: true, water_edges: true};
         } else {
-            tile_chance = TileChance{floor: 33, wall: 33, water: 33};
+            tile_chance = TileChance{floor: 0.33, wall: 0.33, water: 0.33};
             biome_control = BiomeControl{outer_wall: true, water_edges: true};
         }
         let mut tileset: HashMap<String, Tile>;
         let voronoi_regions: Vec<Tile>;
         // Pass 1: generate voronoi_regions using the TileChance to control biome creation
-        voronoi_regions = Map::select_voronoi_regions(sizex, sizey,  &tile_chance, number_of_regions);
+        voronoi_regions = Map::create_voronoi_regions(sizex, sizey,  &tile_chance, number_of_regions);
         // Pass 2: generate empty tileset
         tileset = Map::empty_tileset(sizex, sizey);
         // Pass 3: convert empty tileset to closest voronoi regions
-        tileset = Map::tiles_to_voronoi(tileset, voronoi_regions, number_of_regions);
+        tileset = Map::tiles_to_voronoi(tileset, voronoi_regions);
         // Pass 4: update neighbors of each tile (include corners)
         tileset = Map::update_all_neighbors(sizex, sizey, tileset);
         // Pass 5: make sure all tiles around water are floor
+        //tileset = Map::add_water_edges(sizex, sizey, tileset);
         if biome_control.water_edges {
             tileset = Map::add_water_edges(sizex, sizey, tileset);
         }
@@ -176,16 +179,16 @@ impl Map {
         // Pass X: triangulation (skipping)
 
         let mapsize = Tile::new(sizey, sizex, '$', Vec::new());
-        let player = Tile::new(0, 0, 'p', Vec::new());
+        let player = Tile::new(0, 0, 'p', Vec::new()); // Legacy
         // Additional metadata to save in case another programs needs to know the map size
         tileset.insert(String::from("mapsize"), mapsize);
-        tileset.insert(String::from("player"), player);
+        tileset.insert(String::from("player"), player); // Legacy?
 
         // Build Map structure
         let map: Map = Map {
-            map_wall: '#',
-            map_floor: '.',
-            map_water: '~',
+            map_wall: TILE_TYPE.wall,
+            map_floor: TILE_TYPE.floor,
+            map_water: TILE_TYPE.water,
             map_player: 'p', // legacy (remove later?)
             map_game_objects: tileset
         };
@@ -205,24 +208,22 @@ impl Map {
         tileset
     }
 
-    fn select_voronoi_regions(sizex: i32, sizey: i32, tile_chance: &TileChance, number_of_regions: i32) -> Vec<Tile> {
-        let mut voronoi_regions = Vec::new(); // Vec is duplicated for faster conversion of tiles later
-        let mut rng = rand::thread_rng();
-        for region in 0..number_of_regions {
-            // Select random location for the region
-            let x = rng.gen_range(0, sizex);
-            let y = rng.gen_range(0, sizey);
-            let key = String::from("v") + &region.to_string();
-            let tile = Tile::new_random(y, x, &tile_chance, Vec::new());
-            //let tile = Tile::new(y, x, '.', Vec::new());
-            voronoi_regions.push(tile.clone());
-        }
+    fn create_voronoi_regions(sizex: i32, sizey: i32, tile_chance: &TileChance, number_of_regions: i32) -> Vec<Tile> {
+        // Get exact number of tiles needed for each type (from TileChance percentage)
+        let number_of_floor = (tile_chance.floor * number_of_regions as f32) as i32;
+        let number_of_wall = (tile_chance.wall * number_of_regions as f32) as i32;
+        let number_of_water = (tile_chance.water * number_of_regions as f32) as i32;
+        let mut voronoi_regions = Vec::new();
+        // new_voronoi_tiles returns the exact number of tiles requested of the specific type, xy positions are random
+        voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_floor, TILE_TYPE.floor, voronoi_regions);
+        voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_wall, TILE_TYPE.wall, voronoi_regions);
+        voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_water, TILE_TYPE.water, voronoi_regions);
         voronoi_regions.push(Tile::new(sizey/2, sizex/2, TILE_TYPE.floor, Vec::new())); // Player spawn
         voronoi_regions
     }
 
     // Convert empty tiles in tileset to closest voronoi region type
-    fn tiles_to_voronoi (tileset: HashMap<String, Tile>, voronoi_regions: Vec<Tile>, number_of_regions: i32) -> HashMap<String, Tile> {
+    fn tiles_to_voronoi (tileset: HashMap<String, Tile>, voronoi_regions: Vec<Tile>) -> HashMap<String, Tile> {
         let mut new_tileset = HashMap::new();
         for tile_key in tileset.keys() {
             let mut closest_region: usize = 0;
@@ -243,7 +244,7 @@ impl Map {
     }
 
     // Only store side neighbors
-    fn update_side_neighbors () {}
+    //fn update_side_neighbors () {}
 
     // Store side neighbors and corner neighbors
     fn update_all_neighbors (sizex: i32, sizey: i32, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
@@ -296,7 +297,7 @@ impl Map {
             }
             new_tileset.insert(tile_key.to_string(), new_tile);
         }
-        tileset
+        new_tileset
     }
 
     // Convert all tiles found at edges of map to wall
@@ -372,24 +373,23 @@ impl Tile {
     pub fn new(y: i32, x: i32, c: char, neighbors: Vec<String>) -> Tile {
         Tile { y: y, x: x, c: c, neighbors: neighbors }
     }
-    // This function returns a random tile based on the chances provided,
-    // calling more than once does NOT increase or decrease the chances of getting a specific tile
-    pub fn new_random(y: i32, x: i32, tile_chance: &TileChance, neighbors: Vec<String>) -> Tile {
-        // Use the struct without static limitations (slower)
-        let tile_vec = tile_chance.vec();
-        let mut tile_hash = tile_chance.hash();
-        // Calculate sum of chances
-        let mut max_tile_chance = tile_chance.sum();
-        // This tile
+
+    // Return new vec tiles, random xy positions, set specific tile type
+    pub fn new_voronoi_tiles(sizex: i32, sizey: i32, number_of_tiles: i32, tile_type: char, mut voronoi_regions: Vec<Tile>) -> Vec<Tile> {
         let mut rng = rand::thread_rng();
-        let tile_type = rng.gen_range(0, max_tile_chance);
-        let mut tile = '.';
-        for value in tile_vec {
-            if tile_type < value {
-                tile = tile_hash[&value];
-            }
+        let mut tiles_remaining = number_of_tiles;
+        while tiles_remaining > 0 {
+            tiles_remaining -= 1;
+            voronoi_regions.push(
+                Tile::new(
+                    rng.gen_range(0, sizey),
+                    rng.gen_range(0, sizex),
+                    tile_type,
+                    Vec::new()
+                )
+            );
         }
-        Tile { y: y, x: x, c: tile, neighbors: neighbors }
+        voronoi_regions
     }
     // Create new tile key string, xy coordinate with separator
     pub fn get_tile_key(&self) -> String {
@@ -413,41 +413,6 @@ impl Tile {
         let x = (v.x - t.x).pow(2) as f64;
         let distance = (y + x).sqrt() as i32;
         distance
-    }
-}
-
-// Small helpful functions for biome creation
-impl TileChance {
-    // Return struct in hash form, uses static struct names (update if new tile_type is added)
-    pub fn hash(&self) -> HashMap<i32,char> {
-        // make a HashMap
-        let mut tile_hash = HashMap::new();
-        tile_hash.insert(self.floor,'.');
-        tile_hash.insert(self.wall,'#'); // wall
-        tile_hash.insert(self.water, '~');
-        tile_hash
-    }
-    // Return all struct values in a vec, remove 0 values
-    pub fn vec(&self) -> Vec<i32> {
-        let mut tile_hash = self.hash();
-        let mut tile_chance_vec = Vec::new();
-        for key in tile_hash.keys() {
-            let mut value = *key;
-            if value != 0 {
-                tile_chance_vec.push(value);
-            }
-        }
-        tile_chance_vec.sort(); // Sort lowest percetages first
-        tile_chance_vec
-    }
-    // Return sum of chance values
-    pub fn sum(&self) -> i32 {
-        let mut max_tile_chance = 0;
-        let mut tile_vec = self.vec();
-        for value in tile_vec {
-            max_tile_chance += value;
-        }
-        max_tile_chance
     }
 }
 
