@@ -7,7 +7,7 @@ edition = "2018"
 [lib]
 crate-type = ["cdylib"]
 
-# Debug
+# Debug only
 #[lib]
 #name = "maps"
 #path = "src/lib.rs"

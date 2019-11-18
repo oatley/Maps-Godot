@@ -20,8 +20,8 @@ use flate2::Compression;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tile { // Individual tile data, stored in Map struct HashMap
-    pub y: i32,
     pub x: i32,
+    pub y: i32,
     pub c: char,
     pub neighbors: Vec<String> // this will store a key to game_objects, for each neighbor tiles
 }
@@ -95,7 +95,7 @@ impl Map {
             biome_name = String::from("Cave");
         }
         let file_name = godot_file_name.to_string();
-        let m = Map::new_biome(50, 50, biome_name.clone());
+        let m = Map::new_biome(150, 50, biome_name.clone());
         Map::save_map(&file_name.to_string(), &m, false);
         // Return the random biome to godot for logging
         GodotString::from_str(&biome_name)
@@ -107,10 +107,10 @@ impl Map {
         let biome_control;
         // Prepare the biome data, enforces tile percentage
         if biome_name == "Cave" {
-            tile_chance = TileChance{floor: 0.65, wall: 0.3, water: 0.05};
+            tile_chance = TileChance{floor: 0.3, wall: 0.5, water: 0.2};
             biome_control = BiomeControl{outer_wall: true, water_edges: true};
         } else if biome_name == "Ocean" {
-            tile_chance = TileChance{floor: 0.05, wall: 0.05, water: 0.9};
+            tile_chance = TileChance{floor: 0.1, wall: 0.05, water: 0.85};
             biome_control = BiomeControl{outer_wall: false, water_edges: true};
         } else if biome_name == "Underlake" {
             tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6};
@@ -123,21 +123,28 @@ impl Map {
         let number_of_regions = rng.gen_range(sizex+sizey, (sizex+sizey)*2);
         let mut tileset: HashMap<String, Tile>;
         let voronoi_regions: Vec<Tile>;
+        println!("dead 1");
         // Pass 1: generate voronoi_regions using the TileChance to control biome creation
         voronoi_regions = Map::create_voronoi_regions(sizex, sizey,  &tile_chance, number_of_regions);
+        println!("dead 2");
         // Pass 2: generate empty tileset
         tileset = Map::empty_tileset(sizex, sizey);
+        println!("dead 3");
         // Pass 3: convert empty tileset to closest voronoi regions
         tileset = Map::tiles_to_voronoi(tileset, voronoi_regions);
+        println!("dead 4");
         // Pass 4: update neighbors of each tile (include corners)
         tileset = Map::update_all_neighbors(sizex, sizey, tileset);
+        println!("dead 5");
         // Pass 5: make sure all tiles around water are floor
         if biome_control.water_edges {
             tileset = Map::add_water_edges(sizex, sizey, tileset);
+            println!("dead 6");
         }
         // Pass 6: update wall_borders
         if biome_control.outer_wall {
             tileset = Map::add_wall_borders(sizex, sizey, tileset);
+            println!("dead 7");
         }
         // Pass X: triangulation (skipping)
         // Pass X: pathfinding
@@ -145,6 +152,7 @@ impl Map {
         let mapsize = Tile::new(sizex, sizey, '$', Vec::new());
         // Additional metadata to save in case another programs needs to know the map size
         tileset.insert(String::from("mapsize"), mapsize);
+        println!("dead 8");
 
         // Build Map structure
         let map: Map = Map {
@@ -241,21 +249,25 @@ impl Map {
     fn add_water_edges (sizex: i32, sizey: i32, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
         let mut new_tileset = HashMap::new();
         for tile_key in tileset.keys() {
+            println!("Water 1 {}", tile_key);
             let x = tileset[tile_key].x;
             let y = tileset[tile_key].y;
             let mut tile_type = tileset[tile_key].c;
             let neighbors = tileset[tile_key].neighbors.clone();
             let new_tile;
             if x <= 2 || y <= 2 || x >= sizex-2 || y >= sizey-2 {
+                println!("Water 2 {}", tile_key);
                 new_tile = Tile::new(x, y, tile_type, neighbors);
             } else {
                 for neighbor_key in neighbors.clone() {
+                    println!("Water 3 tile: {} neigh: {}", tile_key, neighbor_key);
                     if tileset[tile_key].c == TILE_TYPE.water && tileset[&neighbor_key].c == TILE_TYPE.wall {
                         tile_type = TILE_TYPE.floor;
                     }
                 }
                 new_tile = Tile::new(x, y, tile_type, neighbors);
             }
+            println!("Water insert 4 {}", tile_key);
             new_tileset.insert(tile_key.to_string(), new_tile);
         }
         new_tileset
@@ -353,8 +365,8 @@ impl Tile {
     }
     // Create new tile key string, xy coordinate with separator
     pub fn get_tile_key(&self) -> String {
-        let ty = &self.x.to_string();
-        let tx = &self.y.to_string();
+        let tx = &self.x.to_string();
+        let ty = &self.y.to_string();
         let sep = String::from("x");
         let mut s = String::new();
         s.push_str(&tx);

@@ -20,8 +20,7 @@ func _process(delta):
         get_input()
   
 func is_floor(x, y):
-  # Reverse y and x for keys... oops curses damn you!
-  var key = str(y) + "x" + str(x)
+  var key = str(x) + "x" + str(y)
   if map[key]["c"] == ".":
     return true
   
