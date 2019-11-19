@@ -4,6 +4,8 @@ onready var gui = get_node("/root/Main/GUI")
 var floor_tile = load("res://scenes/Floor.tscn")
 var wall_tile = load("res://scenes/Wall.tscn")
 var water_tile = load("res://scenes/Water.tscn")
+var sand_tile = load("res://scenes/Sand.tscn")
+var tree_tile = load("res://scenes/Tree.tscn")
 var player_tile = load("res://scenes/Player.tscn")
 var selector_point = load("res://scenes/Selector.tscn")
 var star_point = load("res://scenes/Star.tscn")
@@ -138,6 +140,7 @@ func clear_map():
   #  print("children: ", child.get_children())
   var map_children = map_child.get_children()
   player.hide()
+  player.disabled = true
   for child in map_children:
       child.hide()
   $CanvasModulate.hide()
@@ -160,20 +163,20 @@ func play_vd():
 func play_tiles():
   """show tiles"""
   #gen_map()
+  print("loading new biome")
   var biome = load_map()
   if biome == "fail":
     print("[MAIN]-> exiting play_tiles failure")
     return
   gui.hide()
   draw_map_tiles()
-  add_player()
-  if biome == "Ocean":
-    #var p = get_node("/root/Main/Map/Player/Light2D")
-    #p.texture_scale = 5.0
-    #$CanvasModulate.show()
+  add_player() 
+  if biome == "Ocean" or biome == "Desert" or biome == "Forest": # Detect outside lighting
     $CanvasModulate.hide()
+    player.disable_light()
   else:
     $CanvasModulate.show()
+    player.enable_light()
   #get_node("/root/Main/Map/" + file_name + "canvas_mod").show()
   
 # Give string tell me if file exists
@@ -191,8 +194,6 @@ func detect_old_maps():
   # [IMPORTANT] Loop through files in directory and find which exist
   # Also use /tmp tmpfs if available
   
-  
-  
 func gen_map():
   var gen_map = get_node("/root/Main/Parent")
   var map_count = len(map_store)
@@ -203,8 +204,9 @@ func gen_map():
   map_store[map_name]["ready"] = false # Fix123
   mutex.unlock()
   #gen_map.godot_new_map(map_path + map_name + ".map")
-  #gen_map.godot_new_biome(map_path + map_name + ".map", "Cave")
-  var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
+  var biome = "Forest"
+  gen_map.godot_new_biome(map_path + map_name + ".map", biome)
+  #var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
   mutex.lock()
   map_store[map_name]["biome"] = biome # Fix123
   map_store[map_name]["ready"] = true # Fix123
@@ -312,6 +314,25 @@ func draw_map_tiles():
       node.add_child(t)
     elif map[key]['c'] == "~":
       var t = water_tile.instance()
+      #t.key = key
+      t.position = update_pos(map[key]['x'], map[key]['y'])
+      node.add_child(t)
+    elif map[key]['c'] == ",":
+      var t = sand_tile.instance()
+      #t.key = key
+      t.position = update_pos(map[key]['x'], map[key]['y'])
+      node.add_child(t)
+    elif map[key]['c'] == "t":
+      # Add a ground tile under te tree
+      if map["default_floor"]['c'] == ',':
+        var t = sand_tile.instance()
+        t.position = update_pos(map[key]['x'], map[key]['y'])
+        node.add_child(t)
+      elif map["default_floor"]['c'] == '.':
+        var t = floor_tile.instance()
+        t.position = update_pos(map[key]['x'], map[key]['y'])
+        node.add_child(t)
+      var t = tree_tile.instance()
       #t.key = key
       t.position = update_pos(map[key]['x'], map[key]['y'])
       node.add_child(t)

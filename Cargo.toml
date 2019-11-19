@@ -8,12 +8,12 @@ edition = "2018"
 crate-type = ["cdylib"]
 
 # Debug only
-#[lib]
-#name = "maps"
-#path = "src/lib.rs"
-#[[bin]]
-#name = "maps"
-#path = "src/main.rs"
+# [lib]
+# name = "maps"
+# path = "src/lib.rs"
+# [[bin]]
+# name = "maps"
+# path = "src/main.rs"
 
 
 [dependencies]

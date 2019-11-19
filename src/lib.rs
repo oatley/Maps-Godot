@@ -18,6 +18,22 @@ use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 use flate2::Compression;
 
+// To do:
+// - Store biome control and tile chance inside Map
+// - combine biome control and tile chance into single function or creation (cleans up new_biome())
+// - I don't like how tilechance.floor, tile_type.floor, and map.map_floor are all unconnected...
+// -- All three of the above to come together in a single hashmap or data structure of some kind
+// - Maybe Map can be restructured for simplicity and security: priv Map, pub GodotMap, priv Save/Load/CompressMap
+// -- Separating map into the generation of the tileset, godot interface, and extra tools for load/save/compress
+
+// Thoughts about trees:
+// - The tree is technically not a tile, it is similar to the player, it exists above tiles
+// - There cannot be a different tile for each tile with a tree on top
+// - This means the tree needs to be a separate "key" than a tile, stored in the hashmap separately
+// - What does the tree key look like: t1, t2, t3? or maybe "t25x25" to show which tile is connected
+// - The key must be unique, whatever you do, but the tile key embedded in the key could be a waste of bytes
+
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tile { // Individual tile data, stored in Map struct HashMap
     pub x: i32,
@@ -28,44 +44,65 @@ pub struct Tile { // Individual tile data, stored in Map struct HashMap
 pub struct TileChance { // Used to control the biome tiles on map
     pub floor: f32, // percentage of map floor
     pub wall: f32,  // percentage of map wall
-    pub water: f32 // percentage of map water
+    pub water: f32, // percentage of map water
+    pub sand: f32,
+    pub tree: f32
 }
-pub struct BiomeControl { // Used to control advanced biome manipulation
+pub struct BiomeControl {
     pub water_edges: bool, // Activate method add_water_edges(), makes floor around water
-    pub outer_wall: bool // Activate method add_border_walls(), add wall around map
+    pub outer_wall: bool, // Activate method add_border_walls(), add wall around map
+    pub sparse_trees: bool
 }
-
+pub struct Biome { // Used to control advanced biome manipulation
+    pub biome_name: String,
+    pub tile_chance: TileChance,
+    pub biome_control: BiomeControl
+}
 pub struct TileType { // Static struct to store char for each type_type '.' '#' '~'
     pub floor: char,
     pub wall: char,
-    pub water: char
+    pub water: char,
+    pub sand: char, // Sand is just a variation on floor
+    pub tree: char
 }
 static TILE_TYPE: TileType = TileType { // Static struct of TileType, avoid hardcode chars in methods
     floor: '.',
     wall: '#',
-    water: '~'
+    water: '~',
+    sand: ',',
+    tree: 't'
 };
 
 #[derive(gdnative::NativeClass)]
 #[inherit(gdnative::Node)]
 pub struct Map {
-    pub map_wall: char,
-    pub map_floor: char,
-    pub map_water: char,
-    pub map_game_objects: HashMap<String, Tile>
+    pub tileset: HashMap<String, Tile>
 }
 
 #[gdnative::methods]
 impl Map {
+    pub fn test() {
+        // Convert godot string to rust string
+        let m = Map::new_biome(50, 50, String::from("Forest"));
+        Map::save_map("/tmp/maps/test101.map", &m, false);
+    }
+    fn new(tileset: HashMap<String, Tile>) -> Map {
+        // Build Map structure
+        let map: Map = Map {
+            tileset: tileset
+        };
+        map
+    }
     // Make required directories, give placeholder object to godot
     fn _init(_owner: Node) -> Self {
         let _dir = match fs::create_dir_all("/tmp/maps") { // Make new directory, don't error if exists
             Ok(_dir) => _dir,
             Err(_e) => (),
         };
-        let h: HashMap<String, Tile> = HashMap::new();
-        let m = Map {map_wall:'0',map_floor:'0',map_water:'~',map_game_objects:h};
-        m
+        let tileset = HashMap::new();
+        // Build Map structure
+        let map = Map::new(tileset);
+        map
     }
     // Not used
     #[export]
@@ -83,7 +120,7 @@ impl Map {
     #[export]
     unsafe fn godot_random_biome(&self, _owner: Node, godot_file_name: GodotString) -> GodotString {
         let mut rng = rand::thread_rng();
-        let random_biome = rng.gen_range(0, 3);
+        let random_biome = rng.gen_range(0, 5);
         let biome_name;
         if random_biome == 0 {
             biome_name = String::from("Cave");
@@ -91,6 +128,10 @@ impl Map {
             biome_name = String::from("Ocean");
         } else if random_biome == 2 {
             biome_name = String::from("Underlake");
+        } else if random_biome == 3 {
+            biome_name = String::from("Desert");
+        } else if random_biome == 4 {
+            biome_name = String::from("Forest");
         } else {
             biome_name = String::from("Cave");
         }
@@ -103,28 +144,15 @@ impl Map {
 
     // Generate new map of a specific biome
     pub fn new_biome(sizex: i32, sizey: i32, biome_name: String) -> Map {
-        let tile_chance;
-        let biome_control;
-        // Prepare the biome data, enforces tile percentage
-        if biome_name == "Cave" {
-            tile_chance = TileChance{floor: 0.3, wall: 0.5, water: 0.2};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true};
-        } else if biome_name == "Ocean" {
-            tile_chance = TileChance{floor: 0.1, wall: 0.05, water: 0.85};
-            biome_control = BiomeControl{outer_wall: false, water_edges: true};
-        } else if biome_name == "Underlake" {
-            tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true};
-        } else {
-            tile_chance = TileChance{floor: 0.33, wall: 0.33, water: 0.33};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true};
-        }
+        // Setup basic map creation data
+        let mut tileset: HashMap<String, Tile>; // Will store the final map data, exported to json
+        let biome = Biome::new(biome_name); // Stores data that controls map creation
+        // Prepare random data for voronoi point selection
         let mut rng = rand::thread_rng();
         let number_of_regions = rng.gen_range(sizex+sizey, (sizex+sizey)*2);
-        let mut tileset: HashMap<String, Tile>;
         let voronoi_regions: Vec<Tile>;
         // Pass 1: generate voronoi_regions using the TileChance to control biome creation
-        voronoi_regions = Map::create_voronoi_regions(sizex, sizey,  &tile_chance, number_of_regions);
+        voronoi_regions = Map::create_voronoi_points(sizex, sizey,  &biome, number_of_regions);
         // Pass 2: generate empty tileset
         tileset = Map::empty_tileset(sizex, sizey);
         // Pass 3: convert empty tileset to closest voronoi regions
@@ -132,27 +160,30 @@ impl Map {
         // Pass 4: update neighbors of each tile (include corners)
         tileset = Map::update_all_neighbors(sizex, sizey, tileset);
         // Pass 5: make sure all tiles around water are floor
-        if biome_control.water_edges {
-            tileset = Map::add_water_edges(sizex, sizey, tileset);
+        if biome.biome_control.water_edges {
+            tileset = Map::add_water_edges(sizex, sizey, &biome, tileset);
         }
-        // Pass 6: update wall_borders
-        if biome_control.outer_wall {
-            tileset = Map::add_wall_borders(sizex, sizey, tileset);
+        // Pass 6: Tree sparseness (slow!) turn off for tilesets with little or no trees
+        if biome.biome_control.sparse_trees {
+            tileset = Map::add_sparse_trees(sizex, sizey, &biome, tileset);
+        }
+        // Pass FINAL: update wall_borders
+        if biome.biome_control.outer_wall {
+            tileset = Map::add_wall_borders(sizex, sizey, &biome, tileset);
         }
         // Pass X: triangulation (skipping)
         // Pass X: pathfinding
 
-        let mapsize = Tile::new(sizex, sizey, '$', Vec::new());
-        // Additional metadata to save in case another programs needs to know the map size
-        tileset.insert(String::from("mapsize"), mapsize);
+        // Sneaky secret tiles for map_size and default tiles
+        let map_size = Tile::new(sizex, sizey, '$', Vec::new());
+        let default_floor = Tile::new(sizex, sizey, biome.default_floor(), Vec::new());
+        let default_wall = Tile::new(sizex, sizey, biome.default_wall(), Vec::new());
+        tileset.insert(String::from("mapsize"), map_size);
+        tileset.insert(String::from("default_floor"), default_floor);
+        tileset.insert(String::from("default_wall"), default_wall);
 
         // Build Map structure
-        let map: Map = Map {
-            map_wall: TILE_TYPE.wall,
-            map_floor: TILE_TYPE.floor,
-            map_water: TILE_TYPE.water,
-            map_game_objects: tileset
-        };
+        let map = Map::new(tileset);
         map
     }
 
@@ -169,17 +200,24 @@ impl Map {
         tileset
     }
 
-    fn create_voronoi_regions(sizex: i32, sizey: i32, tile_chance: &TileChance, number_of_regions: i32) -> Vec<Tile> {
+    // This is going to get awful and bloated fast! (maybe rewrite without structs) (think about it)
+    // This could become a part of biome? I mean it is used specifically to change based on biome...
+    // Is there good reason?
+    fn create_voronoi_points(sizex: i32, sizey: i32, biome: &Biome, number_of_regions: i32) -> Vec<Tile> {
         // Get exact number of tiles needed for each type (from TileChance percentage)
-        let number_of_floor = (tile_chance.floor * number_of_regions as f32) as i32;
-        let number_of_wall = (tile_chance.wall * number_of_regions as f32) as i32;
-        let number_of_water = (tile_chance.water * number_of_regions as f32) as i32;
+        let number_of_floor = (biome.tile_chance.floor * number_of_regions as f32) as i32;
+        let number_of_wall = (biome.tile_chance.wall * number_of_regions as f32) as i32;
+        let number_of_water = (biome.tile_chance.water * number_of_regions as f32) as i32;
+        let number_of_sand = (biome.tile_chance.sand * number_of_regions as f32) as i32;
+        let number_of_trees = (biome.tile_chance.tree * number_of_regions as f32) as i32;
         let mut voronoi_regions = Vec::new();
         // new_voronoi_tiles returns the exact number of tiles requested of the specific type, xy positions are random
         voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_floor, TILE_TYPE.floor, voronoi_regions);
         voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_wall, TILE_TYPE.wall, voronoi_regions);
         voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_water, TILE_TYPE.water, voronoi_regions);
-        voronoi_regions.push(Tile::new(sizex/2, sizey/2, TILE_TYPE.floor, Vec::new())); // Player spawn
+        voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_sand, TILE_TYPE.sand, voronoi_regions);
+        voronoi_regions = Tile::new_voronoi_tiles(sizex, sizey, number_of_trees, TILE_TYPE.tree, voronoi_regions);
+        voronoi_regions.push(Tile::new(sizex/2, sizey/2, biome.default_floor(), Vec::new())); // Player spawn
         voronoi_regions
     }
 
@@ -203,9 +241,6 @@ impl Map {
         }
         new_tileset
     }
-
-    // Only store side neighbors
-    //fn update_side_neighbors () {}
 
     // Store side neighbors and corner neighbors
     fn update_all_neighbors (sizex: i32, sizey: i32, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
@@ -238,7 +273,7 @@ impl Map {
     }
 
     // Change all water tiles touching walls into floor (more walkable space)
-    fn add_water_edges (sizex: i32, sizey: i32, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
+    fn add_water_edges (sizex: i32, sizey: i32, biome: &Biome, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
         let mut new_tileset = HashMap::new();
         for tile_key in tileset.keys() {
             let x = tileset[tile_key].x;
@@ -250,8 +285,8 @@ impl Map {
                 new_tile = Tile::new(x, y, tile_type, neighbors);
             } else {
                 for neighbor_key in neighbors.clone() {
-                    if tileset[tile_key].c == TILE_TYPE.water && tileset[&neighbor_key].c == TILE_TYPE.wall {
-                        tile_type = TILE_TYPE.floor;
+                    if tileset[tile_key].c == TILE_TYPE.water && (tileset[&neighbor_key].c == TILE_TYPE.wall || tileset[&neighbor_key].c == TILE_TYPE.tree) {
+                        tile_type = biome.default_floor();
                     }
                 }
                 new_tile = Tile::new(x, y, tile_type, neighbors);
@@ -261,8 +296,38 @@ impl Map {
         new_tileset
     }
 
+    // Delete trees at random if they are touching too many trees
+    fn add_sparse_trees (sizex: i32, sizey: i32, biome: &Biome, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
+        let mut new_tileset = HashMap::new();
+        let mut rng = rand::thread_rng();
+        for tile_key in tileset.keys() {
+            let x = tileset[tile_key].x;
+            let y = tileset[tile_key].y;
+            let mut tile_type = tileset[tile_key].c;
+            let neighbors = tileset[tile_key].neighbors.clone();
+            let new_tile;
+            if x <= 2 || y <= 2 || x >= sizex-2 || y >= sizey-2 {
+                new_tile = Tile::new(x, y, tile_type, neighbors);
+            } else {
+                let mut number_of_trees = 1;
+                for neighbor_key in neighbors.clone() {
+                    if tileset[tile_key].c == TILE_TYPE.tree && (tileset[&neighbor_key].c == TILE_TYPE.wall || tileset[&neighbor_key].c == TILE_TYPE.tree) {
+                        number_of_trees += 1
+                    }
+                }
+                let delete_chance = rng.gen_range(0, number_of_trees);
+                if delete_chance >= 3 {
+                    tile_type = biome.default_floor();
+                }
+                new_tile = Tile::new(x, y, tile_type, neighbors);
+            }
+            new_tileset.insert(tile_key.to_string(), new_tile);
+        }
+        new_tileset
+    }
+
     // Convert all tiles found at edges of map to wall
-    fn add_wall_borders (sizex: i32, sizey: i32, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
+    fn add_wall_borders (sizex: i32, sizey: i32, biome: &Biome, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
         let mut new_tileset = HashMap::new();
         for tile_key in tileset.keys() {
             let x = tileset[tile_key].x;
@@ -270,7 +335,7 @@ impl Map {
             let neighbors = tileset[tile_key].neighbors.clone();
             let new_tile;
             if x == 0 || y == 0 || x == sizex-1 || y == sizey-1 {
-                new_tile = Tile::new(x, y, TILE_TYPE.wall, neighbors);
+                new_tile = Tile::new(x, y, biome.default_wall(), neighbors);
             } else {
                 new_tile = tileset[tile_key].clone();
             }
@@ -289,19 +354,14 @@ impl Map {
             f.read_to_string(&mut s).unwrap();
         }
         //GzDecoder::new(f).read_to_string(&mut s).unwrap();
-        let game_objects: HashMap<String, Tile> = serde_json::from_str(&s).unwrap();
-        let map: Map = Map {
-            map_wall: '#',
-            map_floor: '.',
-            map_water: '~',
-            map_game_objects: game_objects
-        };
+        let tileset: HashMap<String, Tile> = serde_json::from_str(&s).unwrap();
+        let map = Map::new(tileset);
         map
     }
 
     // Serialize hashmap into string, open a file for writing, write to file with compressed bufwriter
     pub fn save_map (filename: &str, map: &Map, compression: bool) {
-        let serialized = serde_json::to_string(&map.map_game_objects).unwrap();
+        let serialized = serde_json::to_string(&map.tileset).unwrap();
         let f = File::create(filename).expect("Unable to create file");
         let enc: flate2::write::GzEncoder<std::fs::File>;
         // if compression enabled, gzip here
@@ -333,8 +393,7 @@ impl Tile {
     pub fn new(x: i32, y: i32, c: char, neighbors: Vec<String>) -> Tile {
         Tile { x: x, y: y, c: c, neighbors: neighbors }
     }
-
-    // Return new vec tiles, random xy positions, set specific tile type
+    // Return new vector filled with tiles, random xy positions, set specific tile type
     pub fn new_voronoi_tiles(sizex: i32, sizey: i32, number_of_tiles: i32, tile_type: char, mut voronoi_regions: Vec<Tile>) -> Vec<Tile> {
         let mut rng = rand::thread_rng();
         let mut tiles_remaining = number_of_tiles;
@@ -376,11 +435,65 @@ impl Tile {
     }
 }
 
+// Abstract biome a little so it's not just dumb data
+impl Biome {
+    fn new(biome_name: String) -> Biome {
+        let biome;
+        let tile_chance;
+        let biome_control;
+        if biome_name == "Cave" {
+            tile_chance = TileChance{floor: 0.3, wall: 0.5, water: 0.2, sand: 0.0, tree: 0.0};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+        } else if biome_name == "Ocean" {
+            tile_chance = TileChance{floor: 0.0, wall: 0.05, water: 0.7, sand: 0.15, tree: 0.1};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true};
+        } else if biome_name == "Underlake" {
+            tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6, sand: 0.0, tree: 0.0};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+        } else if biome_name == "Desert" {
+            tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.15, sand: 0.5, tree: 0.15};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true};
+        } else if biome_name == "Forest" {
+            tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.2, sand: 0.2, tree: 0.4};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: true};
+        } else {
+            tile_chance = TileChance{floor: 0.33, wall: 0.33, water: 0.33, sand: 0.0, tree: 0.0};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+        }
+        biome = Biome {
+            biome_name: biome_name,
+            tile_chance: tile_chance,
+            biome_control: biome_control
+        };
+        biome
+    }
+    pub fn default_floor(&self) -> char {
+        let floor = match self.biome_name.as_ref() {
+            "Cave" => TILE_TYPE.floor,
+            "Ocean" => TILE_TYPE.sand,
+            "Underlake" => TILE_TYPE.floor,
+            "Desert" => TILE_TYPE.sand,
+            "Forest" => TILE_TYPE.sand, //dirt next plz
+            _ => '.',
+        };
+        floor
+    }
+    pub fn default_wall(&self) -> char {
+        let wall = match self.biome_name.as_ref() {
+            "Cave" => TILE_TYPE.wall,
+            "Ocean" => TILE_TYPE.wall, // rock?
+            "Underlake" => TILE_TYPE.wall,
+            "Desert" => TILE_TYPE.wall, // sandy cliff?
+            "Forest" => TILE_TYPE.tree, // tree?
+            _ => TILE_TYPE.wall,
+        };
+        wall
+    }
+}
+
 fn init(handle: gdnative::init::InitHandle) {
     handle.add_class::<Map>();
 }
-
-
 
 godot_gdnative_init!();
 godot_nativescript_init!(init);

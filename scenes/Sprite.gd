@@ -8,9 +8,10 @@ var map
 var vd_mode = false
 var vd_num = 0
 var vd_map
+var disabled = false
 
 func _process(delta):
-  if key == "player":
+  if key == "player" and not disabled:
     delay += delta
     if delay > 0.1:
       delay = 0
@@ -19,9 +20,17 @@ func _process(delta):
       else:
         get_input()
   
+func disable_light():
+  $Light2D.enabled = false
+  
+func enable_light():
+  $Light2D.enabled = true  
+  
 func is_floor(x, y):
+  #if x > map["mapsize"]["x"] || map["mapsize"]["y"] / 2)
   var key = str(x) + "x" + str(y)
-  if map[key]["c"] == ".":
+  if map[key]["c"] == "." or map[key]["c"] == ",":
+    # water walking or map[key]["c"] == "~":
     return true
   
 # This function needs to use voronoi delaunay triangulation
@@ -41,12 +50,17 @@ func get_input_vd():
 func get_input():
   if Input.is_action_pressed("ui_up"):
     move_up()
+    print("mapx:", mapx, " mapy:", mapy)
   elif Input.is_action_pressed("ui_down"):
     move_down()
+    print("mapx:", mapx, " mapy:", mapy)
   elif Input.is_action_pressed("ui_left"):
     move_left()
+    print("mapx:", mapx, " mapy:", mapy)
   elif Input.is_action_pressed("ui_right"):
     move_right()
+    print("mapx:", mapx, " mapy:", mapy)
+  
 
 func update_pos(posx, posy):
   mapx = posx
