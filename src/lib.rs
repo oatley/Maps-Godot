@@ -19,20 +19,18 @@ use flate2::read::GzDecoder;
 use flate2::Compression;
 
 // To do:
-// - Store biome control and tile chance inside Map
-// - combine biome control and tile chance into single function or creation (cleans up new_biome())
-// - I don't like how tilechance.floor, tile_type.floor, and map.map_floor are all unconnected...
-// -- All three of the above to come together in a single hashmap or data structure of some kind
-// - Maybe Map can be restructured for simplicity and security: priv Map, pub GodotMap, priv Save/Load/CompressMap
-// -- Separating map into the generation of the tileset, godot interface, and extra tools for load/save/compress
+// - Store biome control and tile chance inside Map (probably not)
+// - combine biome control and tile chance into single function or creation (maybe)
+// - I don't like how tilechance.floor, tile_type.floor are all unconnected... (too bad)
+// -- All three of the above to come together in a single hashmap or data structure of some kind (nope)
+// - Map can be restructured for simplicity and security: priv Map, pub GodotMap, priv Save/Load/CompressMap (yes please refactor)
+// -- Separating map into the generation of the tileset, godot interface, and extra tools for load/save/compress (next refactor)
+// - Pathfinding:
+// -- A tile thing with f = g + h, parent, and neighbors
+// -- A hashmap(if we need keys) or vector(probably) with a list pathing tiles
+// -- Can gdnative rust pathfind for godot without reading the map file from disk (???)
 
-// Thoughts about trees:
-// - The tree is technically not a tile, it is similar to the player, it exists above tiles
-// - There cannot be a different tile for each tile with a tree on top
-// - This means the tree needs to be a separate "key" than a tile, stored in the hashmap separately
-// - What does the tree key look like: t1, t2, t3? or maybe "t25x25" to show which tile is connected
-// - The key must be unique, whatever you do, but the tile key embedded in the key could be a waste of bytes
-
+// Tree ideas were stupid, they are just tiles
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tile { // Individual tile data, stored in Map struct HashMap
