@@ -97,6 +97,7 @@ pub struct Map {
 
 // Structure copy of the entire map, used to pathfind
 impl PathMap {
+    // Create new PathMap from a previously created Map
     pub fn new(map: Map) -> PathMap {
         let mut path_tiles: HashMap<String, PathTile> = HashMap::new();
         for tile in map.tileset.values() {
@@ -106,6 +107,7 @@ impl PathMap {
         PathMap {path_tiles: path_tiles}
     }
 
+    // Temporary function for pathfinding through usable tiles (might need to path through walls for map-gen)
     pub fn is_walkable(tile_type: char) -> bool {
         let walkable = match tile_type {
             '.' => true,
@@ -118,6 +120,7 @@ impl PathMap {
         walkable
     }
 
+    // A* pathfinding -> returns the shortest_path between two nodes using A* (slow) (probably broken)
     pub fn find_path(start_node: String, end_node: String, mut path_tiles: HashMap<String, PathTile>, map: Map) -> Vec<String> {
         let mut open_list: Vec<String> = Vec::new();
         let mut closed_list: Vec<String> = Vec::new();
@@ -193,6 +196,7 @@ impl PathMap {
         shortest_path
     } // End of find_path
 
+    // Used once find_path gets the end_node in closed_list, traces parents back to start_node
     pub fn trace_path (start_node: String, end_node: String, path_tiles: &HashMap<String, PathTile>) -> Vec<String> {
         let mut current_node = end_node.to_string();
         let mut shortest_path: Vec<String> = Vec::new();
