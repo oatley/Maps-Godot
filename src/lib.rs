@@ -29,8 +29,26 @@ use flate2::Compression;
 // -- A tile thing with f = g + h, parent, and neighbors
 // -- A hashmap(if we need keys) or vector(probably) with a list pathing tiles
 // -- Can gdnative rust pathfind for godot without reading the map file from disk (???)
+// -- Can gdative rust share an list of tiles to godot? Vec<String>? tile keys (is order preserved?)
 
 // Tree ideas were stupid, they are just tiles
+
+
+#[derive(Clone)]
+pub struct PathTile {
+    pub x: i32,
+    pub y: i32,
+    pub g: i32,
+    pub h: i32,
+    pub f: i32,
+    pub parent: String,
+    pub neighbors: Vec<String>
+}
+
+// Used to access PathTile information
+pub struct PathMap {
+    pub path_tiles: HashMap<String, PathTile>
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tile { // Individual tile data, stored in Map struct HashMap
@@ -76,6 +94,190 @@ static TILE_TYPE: TileType = TileType { // Static struct of TileType, avoid hard
 pub struct Map {
     pub tileset: HashMap<String, Tile>
 }
+
+// Structure copy of the entire map, used to pathfind
+impl PathMap {
+    pub fn new(map: Map) -> PathMap {
+        let mut path_tiles: HashMap<String, PathTile> = HashMap::new();
+        for tile in map.tileset.values() {
+            let mut path_tile = PathTile::new(tile.x, tile.y, map.tileset["mapsize"].x, map.tileset["mapsize"].y);
+            path_tiles.insert(path_tile.get_tile_key(), path_tile);
+        }
+        PathMap {path_tiles: path_tiles}
+    }
+
+    pub fn is_walkable(tile_type: char) -> bool {
+        let walkable = match tile_type {
+            '.' => true,
+            ',' => true,
+            '#' => false,
+            't' => false,
+            '~' => false,
+            _   => false
+        };
+        walkable
+    }
+
+    pub fn find_path(start_node: String, end_node: String, mut path_tiles: HashMap<String, PathTile>, map: Map) -> Vec<String> {
+        let mut open_list: Vec<String> = Vec::new();
+        let mut closed_list: Vec<String> = Vec::new();
+        let mut shortest_path: Vec<String> = Vec::new();
+        let mut exit: bool = false;
+        let mut lowest_f_cost_node: String = String::from("");
+        open_list.push(start_node.clone());
+        while ! exit {
+            // Find lowest f cost in open list
+            for current in 0..open_list.len() {
+                if lowest_f_cost_node == "" { // for first detected node just add it
+                    lowest_f_cost_node = path_tiles[&open_list[current]].get_tile_key();
+                } else if path_tiles[&open_list[current]].f < path_tiles[&lowest_f_cost_node].f {
+                    lowest_f_cost_node = path_tiles[&open_list[current]].get_tile_key();
+                }
+            }
+            // Remove element only if it's the lowest_f_cost_node
+            open_list.retain(|tile_key| tile_key.to_string() != lowest_f_cost_node);
+            // Add lowest_f_cost_node tile to closed list
+            closed_list.push(path_tiles[&lowest_f_cost_node].get_tile_key());
+            let current_tile = lowest_f_cost_node.to_string();
+            // For each neighbor to the lowest_f_cost_node, check:
+            for neighbor_key in path_tiles[&current_tile].neighbors.clone() {
+                // if it is not walkable (skip)
+                if ! PathMap::is_walkable(map.tileset[&neighbor_key].c) {
+                    continue;
+                }
+                // if it is in the closed list (skip)
+                if closed_list.iter().any(|x| x == &neighbor_key) {
+                    continue;
+                }
+                // if it's NOT on the open list, add it to the open list
+                if ! open_list.iter().any(|x| x == &neighbor_key) {
+                    open_list.push(neighbor_key.to_string());
+                    // make current_tile, parent to neighbor
+                    let parent = current_tile.to_string();
+                    // g = distance(current_tile, neighbor_tile)
+                    let g = Tile::distance(&map.tileset[&current_tile], &map.tileset[&neighbor_key]);
+                    // h = distance(neighbor_tile, destination_tile)
+                    let h = Tile::heuristic_distance(&map.tileset[&neighbor_key], &map.tileset[&end_node]);
+                    // calculate the: f = g + h
+                    let f = g + h;
+                    // Update costs and parent in tile, overwrite in path_tiles
+                    path_tiles.insert(neighbor_key.clone(), path_tiles[&neighbor_key].tile_update(g, h, f, parent));
+                } else { // if it IS on the open list
+                    // check if this path's g-cost is lower than the previous cost
+                    let g = Tile::distance(&map.tileset[&current_tile], &map.tileset[&neighbor_key]);
+                    // if the g-cost is lower, make current_tile parent to neighbor
+                    if g < path_tiles[&neighbor_key].g {
+                        let parent = current_tile.to_string();
+                        // g = distance(current_tile, neighbor_tile)
+                        let g = Tile::distance(&map.tileset[&current_tile], &map.tileset[&neighbor_key]);
+                        // h = distance(neighbor_tile, destination_tile)
+                        let h = Tile::heuristic_distance(&map.tileset[&neighbor_key], &map.tileset[&end_node]);
+                        // calculate the: f = g + h
+                        let f = g + h;
+                        // Update costs and parent in tile, overwrite in path_tiles
+                        path_tiles.insert(neighbor_key.clone(), path_tiles[&neighbor_key].tile_update(g, h, f, parent));
+                    }
+                }
+            } // end of neighbor loop
+            // Stop main loop if target is in closed_list
+            if closed_list.iter().any(|x| x == &end_node) {
+                shortest_path = PathMap::trace_path(start_node.clone(), end_node.clone(), &path_tiles);
+                exit = true;
+                break;
+            } else if open_list.len() == 0 && ! closed_list.iter().any(|x| x == &end_node) {
+                shortest_path = Vec::new();
+                exit = true;
+                break;
+            }
+        } // end of while exit
+        shortest_path
+    } // End of find_path
+
+    pub fn trace_path (start_node: String, end_node: String, path_tiles: &HashMap<String, PathTile>) -> Vec<String> {
+        let mut current_node = end_node.to_string();
+        let mut shortest_path: Vec<String> = Vec::new();
+        while current_node != start_node {
+            shortest_path.push(current_node.clone());
+            current_node = path_tiles[&current_node].parent.clone();
+        }
+        shortest_path.push(start_node.clone());
+        shortest_path
+    }
+
+}
+
+// Individual tiles for pathfinding
+impl PathTile {
+    pub fn new(x: i32, y: i32, map_size_x: i32, map_size_y: i32) -> PathTile {
+        let mut path_tile = PathTile {
+            x: x,
+            y: y,
+            g: 0,
+            h: 0,
+            f: 0,
+            parent: String::from(""),
+            neighbors: PathTile::get_neighbors(x, y, map_size_x, map_size_y)
+        };
+        path_tile
+    }
+    pub fn get_neighbors(x: i32, y: i32, map_size_x: i32, map_size_y: i32) -> Vec<String> {
+        let mut neighbors: Vec<String> = Vec::new();
+        if x+1 < map_size_x {
+            let right_side = (x + 1).to_string() + "x" + &(y).to_string();
+            neighbors.push(right_side);
+        }
+        if x-1 < 0 {
+            let left_side = (x - 1).to_string() + "x" + &(y).to_string();
+            neighbors.push(left_side);
+        }
+        if y+1 < map_size_y {
+            let bottom_side = (x).to_string() + "x" + &(y + 1).to_string();
+            neighbors.push(bottom_side);
+        }
+        if y-1 < 0 {
+            let top_side = (x).to_string() + "x" + &(y - 1).to_string();
+            neighbors.push(top_side);
+        }
+        neighbors
+    }
+    pub fn tile_update(&self, g: i32, h: i32, f: i32, parent: String) -> PathTile {
+        let new_path_tile = PathTile {
+            x: self.x.clone(),
+            y: self.y.clone(),
+            g: g,
+            h: h,
+            f: f,
+            parent: parent,
+            neighbors: self.neighbors.clone()
+        };
+        new_path_tile
+    }
+
+    pub fn change_parent(&self, parent: String) -> PathTile {
+        let new_path_tile = PathTile {
+            x: self.x.clone(),
+            y: self.y.clone(),
+            g: self.g.clone(),
+            h: self.h.clone(),
+            f: self.f.clone(),
+            parent: parent,
+            neighbors: self.neighbors.clone()
+        };
+        new_path_tile
+    }
+    // Create new tile key string, xy coordinate with separator
+    pub fn get_tile_key(&self) -> String {
+        let tx = &self.x.to_string();
+        let ty = &self.y.to_string();
+        let sep = String::from("x");
+        let mut s = String::new();
+        s.push_str(&tx);
+        s.push_str(&sep);
+        s.push_str(&ty);
+        s
+    }
+}
+
 
 #[gdnative::methods]
 impl Map {
@@ -429,6 +631,13 @@ impl Tile {
         let x = (v.x - t.x).pow(2) as f64;
         let y = (v.y - t.y).pow(2) as f64;
         let distance = (x + y).sqrt() as i32;
+        distance
+    }
+    // Estimate distance between tiles for heuristic
+    pub fn heuristic_distance(v: &Tile, t: &Tile) -> i32 {
+        let x = (v.x - t.x).pow(2) as f64;
+        let y = (v.y - t.y).pow(2) as f64;
+        let distance = (x + y) as i32;
         distance
     }
 }
