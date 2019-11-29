@@ -21,19 +21,9 @@ use flate2::Compression;
 // To do:
 // - Store biome control and tile chance inside Map (probably not)
 // - combine biome control and tile chance into single function or creation (maybe)
-// - I don't like how tilechance.floor, tile_type.floor are all unconnected... (too bad)
-// -- All three of the above to come together in a single hashmap or data structure of some kind (nope)
 // - Map can be restructured for simplicity and security: priv Map, pub GodotMap, priv Save/Load/CompressMap (yes please refactor)
 // -- Separating map into the generation of the tileset, godot interface, and extra tools for load/save/compress (next refactor)
-// - Pathfinding:
-// -- A tile thing with f = g + h, parent, and neighbors
-// -- A hashmap(if we need keys) or vector(probably) with a list pathing tiles
-// -- Can gdnative rust pathfind for godot without reading the map file from disk (???)
-// -- Can gdative rust share an list of tiles to godot? Vec<String>? tile keys (is order preserved?)
-//  - Update pathfinding to store the map and path_map in memory through the godot init in rustc
-// -- create a second exported godot function, that returns the pth to godot in StringArray
-
-// Tree ideas were stupid, they are just tiles
+// - PathMap could export to json... (does it matter?)
 
 
 #[derive(Clone)]
@@ -69,7 +59,8 @@ pub struct TileChance { // Used to control the biome tiles on map
 pub struct BiomeControl {
     pub water_edges: bool, // Activate method add_water_edges(), makes floor around water
     pub outer_wall: bool, // Activate method add_border_walls(), add wall around map
-    pub sparse_trees: bool
+    pub sparse_trees: bool,
+    pub roads: bool
 }
 pub struct Biome { // Used to control advanced biome manipulation
     pub biome_name: String,
@@ -104,89 +95,29 @@ pub struct Map {
 
 #[gdnative::methods]
 impl Map {
-    #[export]
-    pub fn godot_path_find(&self, _owner: Node, godot_file_name: GodotString, start_tile: GodotString, end_tile: GodotString) -> StringArray {
-        let file = godot_file_name.to_string();
-        let map = Map::load_map(&file, false);
-        let mut path_map = PathMap::new(&map.tileset);
-        let mut path_tiles = path_map.path_tiles.clone();
-        let mut path = PathMap::find_path(start_tile.to_string(), end_tile.to_string(), path_tiles, &map.tileset);
-        println!("test1");
-        let mapsize = map.tileset["mapsize"].c.to_string();
-        println!("test2");
-        let veccy: Vec<String> = vec![
-            String::from("test1"),
-            String::from("testNOOTHIS IS NOTUSED"),
-            String::from("test3")
-        ];
-        println!("test3");
-        let mut stringy = String::from("meow");
-        let sep = String::from("->");
-        let mut godot_array: StringArray = StringArray::new();
-        for tile in path {
-            stringy.push_str(&sep);
-            stringy.push_str(&tile);
-            godot_array.push(&GodotString::from_str(&tile))
-        }
-        println!("test4");
-        stringy.push_str(&mapsize);
-        println!("test5");
-        //let godot_string = GodotString::from_str(&stringy);
-        println!("test6");
-        println!("{}", stringy);
-        //godot_string
-        //GodotString::from_str(&stringy)
-        godot_array
-    }
-    pub fn test() {
-        // Convert godot string to rust string
+    pub fn test() { // debug testing only
+        Map::prep();
         let m = Map::new_biome(50, 50, String::from("Forest"));
         Map::save_map("/tmp/maps/test101.map", &m, false);
     }
-    pub fn test2(godot_file_name: String, start_tile: String, end_tile: String) {
-        let file = godot_file_name.to_string();
-        let map = Map::load_map(&file, false);
-        let mut path_map = PathMap::new(&map.tileset);
-        let mut path_tiles = path_map.path_tiles.clone();
-        let mut path = PathMap::find_path(start_tile.to_string(), end_tile.to_string(), path_tiles, &map.tileset);
-        println!("test1");
-        let mapsize = map.tileset["mapsize"].c.to_string();
-        println!("test2");
-        let veccy: Vec<String> = vec![
-            String::from("test1"),
-            String::from("test2"),
-            String::from("test3")
-        ];
-        println!("test3");
-        let mut stringy = String::from("meow");
-        let sep = String::from("->");
-        for tile in path {
-            stringy.push_str(&sep);
-            stringy.push_str(&tile);
-        }
-        println!("test4");
-        stringy.push_str(&mapsize);
-        println!("test5");
-        //let godot_string = GodotString::from_str(&stringy);
-        println!("test6");
-        println!("{}", stringy);
-        //godot_string
-    }
+    // Build Map structure
     fn new(tileset: HashMap<String, Tile>) -> Map {
-        // Build Map structure
         let map: Map = Map {
             tileset: tileset
         };
         map
     }
-    // Make required directories, give placeholder object to godot
-    fn _init(_owner: Node) -> Self {
-        let _dir = match fs::create_dir_all("/tmp/maps") { // Make new directory, don't error if exists
+    // Make new directory, don't error if exists
+    fn prep() {
+        let _dir = match fs::create_dir_all("/tmp/maps") {
             Ok(_dir) => _dir,
             Err(_e) => (),
         };
+    }
+    // Make required directories, give placeholder object to godot
+    fn _init(_owner: Node) -> Self {
+        Map::prep();
         let tileset = HashMap::new();
-        // Build Map structure
         let map = Map::new(tileset);
         map
     }
@@ -227,6 +158,22 @@ impl Map {
         // Return the random biome to godot for logging
         GodotString::from_str(&biome_name)
     }
+    #[export] // Specify a map file to read, and a start_tile and end_tile, return path between
+    pub fn godot_path_find(&self, _owner: Node, godot_file_name: GodotString, start_tile: GodotString, end_tile: GodotString) -> StringArray {
+        // Load map file
+        let file_name = godot_file_name.to_string();
+        let map = Map::load_map(&file_name, false);
+        // Create new PathMap overlay (copy of Map but with cost/parent info)
+        let mut path_map = PathMap::new(map.tileset["mapsize"].x, map.tileset["mapsize"].y, &map.tileset);
+        // Get the path in Vec<String> (where string is tile keys)
+        let mut path = PathMap::find_path(start_tile.to_string(), end_tile.to_string(), path_map.path_tiles, &map.tileset);
+        // Convert to Godot StringArray, and return
+        let mut godot_array: StringArray = StringArray::new();
+        for tile in path {
+            godot_array.push(&GodotString::from_str(&tile))
+        }
+        godot_array
+    }
 
     // Generate new map of a specific biome
     pub fn new_biome(sizex: i32, sizey: i32, biome_name: String) -> Map {
@@ -242,7 +189,7 @@ impl Map {
         // Pass 2: generate empty tileset
         tileset = Map::empty_tileset(sizex, sizey);
         // Pass 3: convert empty tileset to closest voronoi regions
-        tileset = Map::tiles_to_voronoi(tileset, voronoi_regions);
+        tileset = Map::tiles_to_voronoi(voronoi_regions, tileset);
         // Pass 4: update neighbors of each tile (include corners)
         tileset = Map::update_all_neighbors(sizex, sizey, tileset);
         // Pass 5: make sure all tiles around water are floor
@@ -253,7 +200,10 @@ impl Map {
         if biome.biome_control.sparse_trees {
             tileset = Map::add_sparse_trees(sizex, sizey, &biome, tileset);
         }
-
+        // Pass 7: Draw a road
+        if biome.biome_control.roads {
+            tileset = Map::draw_road(sizex, sizey, "25x25".to_string(), "15x15".to_string(), tileset);
+        }
         // Pass FINAL: update wall_borders
         if biome.biome_control.outer_wall {
             tileset = Map::add_wall_borders(sizex, sizey, &biome, tileset);
@@ -261,7 +211,7 @@ impl Map {
         // Pass X: triangulation (skipping)
         // Pass X: pathfinding
 
-        // Sneaky secret tiles for map_size and default tiles
+        // Sneaky secret tiles for map_size and default tiles for each biome
         let map_size = Tile::new(sizex, sizey, '$', Vec::new());
         let default_floor = Tile::new(sizex, sizey, biome.default_floor(), Vec::new());
         let default_wall = Tile::new(sizex, sizey, biome.default_wall(), Vec::new());
@@ -269,10 +219,6 @@ impl Map {
         tileset.insert(String::from("default_floor"), default_floor);
         tileset.insert(String::from("default_wall"), default_wall);
 
-
-        // println!("fuck start");
-        tileset = Map::draw_road("25x25".to_string(), "40x40".to_string(), tileset);
-        // println!("fuck end");
 
         // Build Map structure
         let map = Map::new(tileset);
@@ -314,7 +260,7 @@ impl Map {
     }
 
     // Convert empty tiles in tileset to closest voronoi region type
-    fn tiles_to_voronoi (tileset: HashMap<String, Tile>, voronoi_regions: Vec<Tile>) -> HashMap<String, Tile> {
+    fn tiles_to_voronoi (voronoi_regions: Vec<Tile>, tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
         let mut new_tileset = HashMap::new();
         for tile_key in tileset.keys() {
             let mut closest_region: usize = 0;
@@ -436,16 +382,11 @@ impl Map {
         new_tileset
     }
 
-    // Use PathMap to draw lines/roads on the map (test with desert)
-    // Try and modify tileset instead of making a new one
-    pub fn draw_road(start_tile: String, end_tile: String, mut tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
-        // println!("fuck1");
-        let mut path_map = PathMap::new(&tileset);
-        // println!("fuck2");
+    //
+    pub fn draw_road(sizex: i32, sizey: i32, start_tile: String, end_tile: String, mut tileset: HashMap<String, Tile>) -> HashMap<String, Tile> {
+        let mut path_map = PathMap::new(sizex, sizey, &tileset);
         let path = PathMap::find_path(start_tile, end_tile, path_map.path_tiles, &tileset);
-        // println!("fuck3");
         for tile in path {
-            println!("path: {}", tile);
             let new_tile = Tile::new(tileset[&tile].x, tileset[&tile].y, TILE_TYPE.road, tileset[&tile].neighbors.clone());
             tileset.insert(tile.to_string(), new_tile);
         }
@@ -559,22 +500,22 @@ impl Biome {
         let biome_control;
         if biome_name == "Cave" {
             tile_chance = TileChance{floor: 0.3, wall: 0.5, water: 0.2, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
         } else if biome_name == "Ocean" {
             tile_chance = TileChance{floor: 0.0, wall: 0.05, water: 0.7, sand: 0.15, tree: 0.1};
-            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true, roads: false};
         } else if biome_name == "Underlake" {
             tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
         } else if biome_name == "Desert" {
             tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.15, sand: 0.5, tree: 0.15};
-            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true, roads: true};
         } else if biome_name == "Forest" {
             tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.2, sand: 0.2, tree: 0.4};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: true};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: true, roads: true};
         } else {
             tile_chance = TileChance{floor: 0.33, wall: 0.33, water: 0.33, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
         }
         biome = Biome {
             biome_name: biome_name,
@@ -609,22 +550,18 @@ impl Biome {
 
 // Structure copy of the entire map, used to pathfind
 impl PathMap {
-    // Create new PathMap from a previously created Map
-    pub fn new(tileset: &HashMap<String, Tile>) -> PathMap {
-        // println!("fuck PathMap 1");
+    // Create new PathMap, path_tiles is a copy of tileset with costs and parent data (could abstract HPA* later?)
+    pub fn new(map_size_x: i32, map_size_y: i32, tileset: &HashMap<String, Tile>) -> PathMap {
         let mut path_tiles: HashMap<String, PathTile> = HashMap::new();
-        // println!("fuck PathMap 2");
         for tile in tileset.values() {
-        // println!("fuck PathMap 3");
-            let mut path_tile = PathTile::new(tile.x, tile.y, tileset["mapsize"].x, tileset["mapsize"].y);
-        // println!("fuck PathMap 4");
+            let mut path_tile = PathTile::new(tile.x, tile.y, map_size_x, map_size_y);
             path_tiles.insert(path_tile.get_tile_key(), path_tile);
-        // println!("fuck PathMap 5");
         }
         PathMap {path_tiles: path_tiles}
     }
 
     // Temporary function for pathfinding through usable tiles (might need to path through walls for map-gen)
+    // Might need to be an enum or more customizable (build bridges over water, tunnels through mountains, etc)
     pub fn is_walkable(tile_type: char) -> bool {
         let walkable = match tile_type {
             '.' => true,
@@ -637,8 +574,8 @@ impl PathMap {
         walkable
     }
 
-    // Pretty fucking sure this is an infinite loop.... Lets look through it later
-    // A* pathfinding -> returns the shortest_path between two nodes using A* (slow) (probably broken)
+    // This is a little hard to read, maybe calculating costs can be shrunk down
+    // A* pathfinding -> returns the shortest_path between two nodes using A* (slow) (goes through walls)
     pub fn find_path(start_node: String, end_node: String, mut path_tiles: HashMap<String, PathTile>, tileset: &HashMap<String, Tile>) -> Vec<String> {
         let mut open_list: Vec<String> = Vec::new();
         let mut closed_list: Vec<String> = Vec::new();
@@ -650,108 +587,67 @@ impl PathMap {
         while ! exit {
             // Find lowest f cost in open list
             for current in 0..open_list.len() {
-                if lowest_f_cost_node == "" { // for first detected node just add it
+                if lowest_f_cost_node == "" {
+                    // Calculate costs for starting node, update tile in path_tiles
                     lowest_f_cost_node = path_tiles[&open_list[current]].get_tile_key();
                     let parent = start_node.to_string();
-                    // g = distance(current_tile, neighbor_tile)
                     let g = Tile::distance(&tileset[&start_node], &tileset[&end_node]);
-                    // h = distance(neighbor_tile, destination_tile)
                     let h = Tile::heuristic_distance(&tileset[&start_node], &tileset[&end_node]);
-                    // calculate the: f = g + h
                     let f = g + h;
-                    // Update costs and parent in tile, overwrite in path_tiles
                     path_tiles.insert(start_node.clone(), path_tiles[&start_node].tile_update(g, h, f, parent));
-                    println!("lowest_f_cost_node intial set: {}, cost: {}", lowest_f_cost_node, path_tiles[&start_node].f);
-
                 } else if path_tiles[&open_list[current]].f < path_tiles[&lowest_f_cost_node].f {
                     lowest_f_cost_node = path_tiles[&open_list[current]].get_tile_key();
-                    println!("lowest_f_cost_node set: {}", lowest_f_cost_node);
-
-
                 }
             }
-            // Remove element only if it's the lowest_f_cost_node
-            println!("remove lowest from open_list: {} -> {}", open_list.len(), lowest_f_cost_node);
-            for i in 0..open_list.len() {
-                println!("i:{} -> tile:",open_list[i]);
-                println!("lowest: {}",lowest_f_cost_node);
-
-            }
+            // Set the lowest_f_cost_node to the current_tile, remove from open_list, add to closed_list
             open_list.retain(|tile_key| tile_key.to_string() != lowest_f_cost_node);
-            for i in 0..open_list.len() {
-                println!("i:{} -> tile:",open_list[i]);
-            }
-            println!("remove lowest from open_list: {}", open_list.len());
-
-            // Add lowest_f_cost_node tile to closed list
             closed_list.push(path_tiles[&lowest_f_cost_node].get_tile_key());
-            println!("add lowest to closed: {}", closed_list.len());
             current_tile = lowest_f_cost_node.to_string();
-            // For each neighbor to the lowest_f_cost_node, check:
-            println!("loop over neighbors of lowest: {}", path_tiles[&current_tile].neighbors.len());
+            // Search all neighbors to current_tile for destination, calculate new costs
             for neighbor_key in path_tiles[&current_tile].neighbors.clone() {
-                // if it is not walkable (skip)
+                // If tile is NOT walkable (skip)
                 if ! PathMap::is_walkable(tileset[&neighbor_key].c) {
-                    println!("skipping unwalkable: {} -> {}", neighbor_key, tileset[&neighbor_key].c);
                     continue;
                 }
-                // if it is in the closed list (skip)
+                // If tile is in the closed list (skip)
                 if closed_list.iter().any(|x| x == &neighbor_key) {
-                    println!("skipping tile in closed_list: {}", neighbor_key);
                     continue;
                 }
-                // if it's NOT on the open list, add it to the open list
+                // If tile is NOT on the open list, add it to the open list
                 if ! open_list.iter().any(|x| x == &neighbor_key) {
-                    println!("add tile to open list: {}", neighbor_key);
+                    // Calculate costs for starting node, update tile in path_tiles
                     open_list.push(neighbor_key.to_string());
-                    // make current_tile, parent to neighbor
                     let parent = current_tile.to_string();
-                    // g = distance(current_tile, neighbor_tile)
                     let g = Tile::distance(&tileset[&current_tile], &tileset[&neighbor_key]);
-                    // h = distance(neighbor_tile, destination_tile)
                     let h = Tile::heuristic_distance(&tileset[&neighbor_key], &tileset[&end_node]);
-                    // calculate the: f = g + h
                     let f = g + h;
-                    // Update costs and parent in tile, overwrite in path_tiles
                     path_tiles.insert(neighbor_key.clone(), path_tiles[&neighbor_key].tile_update(g, h, f, parent));
-                    println!("cost of new open list tile: {} -> {}", neighbor_key, path_tiles[&neighbor_key].f);
-                    println!("cost of start: {}", path_tiles[&start_node].f);
-
-                } else { // if it IS on the open list
-                    println!("tile on open, check for better path: {}", neighbor_key);
-                    // check if this path's g-cost is lower than the previous cost
-                    let g = Tile::distance(&tileset[&current_tile], &tileset[&neighbor_key]);
-                    // if the g-cost is lower, make current_tile parent to neighbor
-                    if g < path_tiles[&neighbor_key].g {
-                        println!("better path found: {} -> old:{} -> new:{}", neighbor_key, path_tiles[&neighbor_key].g, g);
+                } else { // Tile IS on the open list, check if this path's g-cost is lower than the previous cost
+                    let new_g_cost = Tile::distance(&tileset[&current_tile], &tileset[&neighbor_key]);
+                    // if this new path's g-cost is lower, calculate new costs and update path_tiles
+                    if new_g_cost < path_tiles[&neighbor_key].g {
                         let parent = current_tile.to_string();
-                        // g = distance(current_tile, neighbor_tile)
                         let g = Tile::distance(&tileset[&current_tile], &tileset[&neighbor_key]);
-                        // h = distance(neighbor_tile, destination_tile)
                         let h = Tile::heuristic_distance(&tileset[&neighbor_key], &tileset[&end_node]);
-                        // calculate the: f = g + h
                         let f = g + h;
-                        // Update costs and parent in tile, overwrite in path_tiles
                         path_tiles.insert(neighbor_key.clone(), path_tiles[&neighbor_key].tile_update(g, h, f, parent));
                     }
                 }
-            } // end of neighbor loop
-            // Stop main loop if target is in closed_list
-            println!("STOP MAIN LOOP CHECK: open_list.len(): {}, check closed_list: {}, end_node: {}", open_list.len(), closed_list.len(), end_node );
+            } // end of current_tile.neighbors
+            // Path success between start and end, exit main loop, return path Vec<string> of tile keys
             if closed_list.iter().any(|x| x == &end_node) {
-                println!("KILL KILL KILL");
                 shortest_path = PathMap::trace_path(start_node.clone(), end_node.clone(), &path_tiles);
                 exit = true;
                 break;
+            // Path failed to connect start and end nodes (possible if no walkable route)
             } else if open_list.len() == 0 && ! closed_list.iter().any(|x| x == &end_node) {
-                println!("KILL KILL KILL");
                 shortest_path = Vec::new();
                 exit = true;
                 break;
             }
         } // end of while exit
         shortest_path
-    } // End of find_path
+    }
 
     // Used once find_path gets the end_node in closed_list, traces parents back to start_node
     pub fn trace_path (start_node: String, end_node: String, path_tiles: &HashMap<String, PathTile>) -> Vec<String> {
@@ -781,13 +677,15 @@ impl PathTile {
         };
         path_tile
     }
+
+    // Generate neighbor keys
     pub fn get_neighbors(x: i32, y: i32, map_size_x: i32, map_size_y: i32) -> Vec<String> {
         let mut neighbors: Vec<String> = Vec::new();
         if x+1 < map_size_x {
             let right_side = (x + 1).to_string() + "x" + &(y).to_string();
             neighbors.push(right_side);
         }
-        if x-1 < 0 {
+        if x-1 > 0 {
             let left_side = (x - 1).to_string() + "x" + &(y).to_string();
             neighbors.push(left_side);
         }
@@ -795,12 +693,13 @@ impl PathTile {
             let bottom_side = (x).to_string() + "x" + &(y + 1).to_string();
             neighbors.push(bottom_side);
         }
-        if y-1 < 0 {
+        if y-1 > 0 {
             let top_side = (x).to_string() + "x" + &(y - 1).to_string();
             neighbors.push(top_side);
         }
         neighbors
     }
+    // Maybe calculate costs here?
     pub fn tile_update(&self, g: i32, h: i32, f: i32, parent: String) -> PathTile {
         let new_path_tile = PathTile {
             x: self.x.clone(),
@@ -813,7 +712,7 @@ impl PathTile {
         };
         new_path_tile
     }
-
+    // Do we need two different update functions?
     pub fn change_parent(&self, parent: String) -> PathTile {
         let new_path_tile = PathTile {
             x: self.x.clone(),

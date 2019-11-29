@@ -50,10 +50,7 @@ func _process(delta):
     semaphore.post()
   update()
   if Input.is_action_just_released("ui_path"):
-    print("AHHHHHH")
-    print("dying11111")
     test_path_find()
-    print("dying222222")
   if Input.is_action_pressed("ui_accept"):
     #gui.show()
     $CanvasModulate.hide()
