@@ -25,6 +25,7 @@ var semaphore
 var file_name
 var exit_thread
 var thread_busy = false
+var max_maps_to_generate = 1
 
 # Timer to run thread ever 20 seconds
 var timer = 0.0
@@ -43,11 +44,16 @@ func _process(delta):
   if timer > reset_timer and not get_thread_busy():
     print("attempting to start thread")
     timer = 0.0
-    if len(map_store) > 10:
+    if len(map_store) > max_maps_to_generate:
       print("DEATH TO THREADS", len(map_store))
       exit_thread = true
     semaphore.post()
   update()
+  if Input.is_action_just_released("ui_path"):
+    print("AHHHHHH")
+    print("dying11111")
+    test_path_find()
+    print("dying222222")
   if Input.is_action_pressed("ui_accept"):
     #gui.show()
     $CanvasModulate.hide()
@@ -106,7 +112,15 @@ func _thread_gen_map(userdata):
     gen_map()
     print("[THREAD_gen_map]-> thread finished")
   
+func test_path_find():
+  var map_path = "resources/maps/"
+  print("TESTING PATHFIND:" + map_path + file_name + ".map")
+  var gen_map = get_node("/root/Main/Parent")
   
+  print("dying1")
+  
+  var string_array = gen_map.godot_path_find(map_path + file_name + ".map", "5x5", "15x15")
+  print(string_array)
   
     
 # Remove script from all floors and walls!

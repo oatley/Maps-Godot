@@ -50,6 +50,7 @@ margin_left = 288.0
 margin_right = 504.0
 margin_bottom = 37.0
 custom_fonts/font = SubResource( 2 )
+disabled = true
 text = "Show Voronoi"
 
 [node name="Show Tiles" type="Button" parent="VBoxContainer/Buttons"]

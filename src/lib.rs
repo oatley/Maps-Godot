@@ -104,10 +104,73 @@ pub struct Map {
 
 #[gdnative::methods]
 impl Map {
+    #[export]
+    pub fn godot_path_find(&self, _owner: Node, godot_file_name: GodotString, start_tile: GodotString, end_tile: GodotString) -> StringArray {
+        let file = godot_file_name.to_string();
+        let map = Map::load_map(&file, false);
+        let mut path_map = PathMap::new(&map.tileset);
+        let mut path_tiles = path_map.path_tiles.clone();
+        let mut path = PathMap::find_path(start_tile.to_string(), end_tile.to_string(), path_tiles, &map.tileset);
+        println!("test1");
+        let mapsize = map.tileset["mapsize"].c.to_string();
+        println!("test2");
+        let veccy: Vec<String> = vec![
+            String::from("test1"),
+            String::from("testNOOTHIS IS NOTUSED"),
+            String::from("test3")
+        ];
+        println!("test3");
+        let mut stringy = String::from("meow");
+        let sep = String::from("->");
+        let mut godot_array: StringArray = StringArray::new();
+        for tile in path {
+            stringy.push_str(&sep);
+            stringy.push_str(&tile);
+            godot_array.push(&GodotString::from_str(&tile))
+        }
+        println!("test4");
+        stringy.push_str(&mapsize);
+        println!("test5");
+        //let godot_string = GodotString::from_str(&stringy);
+        println!("test6");
+        println!("{}", stringy);
+        //godot_string
+        //GodotString::from_str(&stringy)
+        godot_array
+    }
     pub fn test() {
         // Convert godot string to rust string
         let m = Map::new_biome(50, 50, String::from("Forest"));
         Map::save_map("/tmp/maps/test101.map", &m, false);
+    }
+    pub fn test2(godot_file_name: String, start_tile: String, end_tile: String) {
+        let file = godot_file_name.to_string();
+        let map = Map::load_map(&file, false);
+        let mut path_map = PathMap::new(&map.tileset);
+        let mut path_tiles = path_map.path_tiles.clone();
+        let mut path = PathMap::find_path(start_tile.to_string(), end_tile.to_string(), path_tiles, &map.tileset);
+        println!("test1");
+        let mapsize = map.tileset["mapsize"].c.to_string();
+        println!("test2");
+        let veccy: Vec<String> = vec![
+            String::from("test1"),
+            String::from("test2"),
+            String::from("test3")
+        ];
+        println!("test3");
+        let mut stringy = String::from("meow");
+        let sep = String::from("->");
+        for tile in path {
+            stringy.push_str(&sep);
+            stringy.push_str(&tile);
+        }
+        println!("test4");
+        stringy.push_str(&mapsize);
+        println!("test5");
+        //let godot_string = GodotString::from_str(&stringy);
+        println!("test6");
+        println!("{}", stringy);
+        //godot_string
     }
     fn new(tileset: HashMap<String, Tile>) -> Map {
         // Build Map structure
