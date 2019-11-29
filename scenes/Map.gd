@@ -204,9 +204,9 @@ func gen_map():
   map_store[map_name]["ready"] = false # Fix123
   mutex.unlock()
   #gen_map.godot_new_map(map_path + map_name + ".map")
-  #var biome = "Forest"
-  #gen_map.godot_new_biome(map_path + map_name + ".map", biome)
-  var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
+  var biome = "Forest"
+  gen_map.godot_new_biome(map_path + map_name + ".map", biome)
+  #var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
   mutex.lock()
   map_store[map_name]["biome"] = biome # Fix123
   map_store[map_name]["ready"] = true # Fix123
