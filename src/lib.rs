@@ -18,12 +18,30 @@ use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 use flate2::Compression;
 
+// Priority Todo:
+// - Compile a library for use with godot, this library will not be updated, must make basic maps
+
+
 // To do:
+// - After refactor and crate separation: Javascript/webassembly front end map viewer using godot tiles
+// - Might be good to separate into multiple crates soon
 // - Store biome control and tile chance inside Map (probably not)
+// - BiomeControl is getting bulky! (anything to do? probably not)
 // - combine biome control and tile chance into single function or creation (maybe)
 // - Map can be restructured for simplicity and security: priv Map, pub GodotMap, priv Save/Load/CompressMap (yes please refactor)
 // -- Separating map into the generation of the tileset, godot interface, and extra tools for load/save/compress (next refactor)
 // - PathMap could export to json... (does it matter?)
+// -- This might actually be required for pre-computed paths!!!
+// - Exits! Exits can be added to the side of a map, to make maps go infinite (Priority)
+// -- The idea is that you generate multiple maps in a grid with connections on specific tiles
+// - Roads: connect roads to exits(BiomeControl bool) (Priority)
+// - HPA*: think about or research what kind of data structure is simple enough to store abstracted map data (not yet)
+// -- I think the most important change or addition is the ability to store a separate optional path for each abstracted PathTile?
+// -- It would be useful for path finding across a grid of maps, instead of just tiles too (if it isn't too hard)
+// -- Would require: maps that are connected (easy), pre computed path between exits (needs file storage)(hard), store map data in PathTile(?)
+// - Maze Biome
+// - City Biome
+// - Quad-Tree stored world, through a Quad-Sphere or basic cube initially
 
 
 #[derive(Clone)]
@@ -60,7 +78,9 @@ pub struct BiomeControl {
     pub water_edges: bool, // Activate method add_water_edges(), makes floor around water
     pub outer_wall: bool, // Activate method add_border_walls(), add wall around map
     pub sparse_trees: bool,
-    pub roads: bool
+    pub roads: bool,
+    pub exit_roads: bool,
+    pub exits: bool
 }
 pub struct Biome { // Used to control advanced biome manipulation
     pub biome_name: String,
@@ -71,9 +91,10 @@ pub struct TileType { // Static struct to store char for each type_type '.' '#' 
     pub floor: char,
     pub wall: char,
     pub water: char,
-    pub sand: char, // Sand is just a variation on floor
+    pub sand: char,
     pub tree: char,
-    pub road: char
+    pub road: char,
+    pub exit: char
 }
 static TILE_TYPE: TileType = TileType { // Static struct of TileType, avoid hardcode chars in methods
     floor: '.',
@@ -81,16 +102,137 @@ static TILE_TYPE: TileType = TileType { // Static struct of TileType, avoid hard
     water: '~',
     sand: ',',
     tree: 't',
-    road: '.' // Same as floor for testing
+    road: '.', // Same as floor for testing
+    exit: '/'
 };
 
 #[derive(gdnative::NativeClass)]
 #[inherit(gdnative::Node)]
 pub struct Map {
+    pub world_x: i32,
+    pub world_y: i32,
+    pub world_z: i32,
     pub tileset: HashMap<String, Tile>
 }
 
+// New world structs (this maybe should NOT be a xyz grid) (is there a better way to do this) (research world generation)
+// Stores map_file_name, map_position_on_world, map_biome, connected_map_neighbors
+pub struct World {
+    pub world_name: String, // Directory name to store maps
+    pub size_x: i32, // Max size 5 mean -5 .. 0 .. 5 (inclusive)
+    pub size_y: i32, // Allows the manipulation of the world shape
+    pub size_z: i32, // Use z to make a giant tower
+    pub directory: String,
+    pub compress_maps: bool,
+    pub maps: HashMap<String, String> // location(xyz) and file_name
+}
 
+// Save world in a directory
+// world_name/world_name.json
+// world_name/maps/map_name.map
+
+impl World {
+    fn new (world_name: String, size_x: i32, size_y: i32, size_z: i32) -> World {
+        let directory = String::from("/tmp/worlds/") + &world_name;
+        let _dir = match fs::create_dir_all(&directory) {
+            Ok(_dir) => _dir,
+            Err(_e) => (),
+        };
+        let mut maps: HashMap<String, String> = HashMap::new();
+        maps.insert(String::from("world_name"), world_name.to_string());
+        maps.insert(String::from("size_x"), size_x.to_string());
+        maps.insert(String::from("size_y"), size_y.to_string());
+        maps.insert(String::from("size_z"), size_z.to_string());
+        maps.insert(String::from("directory"), directory.to_string());
+        World {world_name: world_name, size_x: size_x, size_y: size_y, size_z: size_z, directory: directory, compress_maps: false, maps: maps}
+    }
+    // Test a cube 3x3x3 world
+    pub fn new_world_test() {
+        let mut world = World::new(String::from("meow"), 3, 3, 3);
+        let mut maps = HashMap::new();
+        maps.insert(String::from("world_name"), world.world_name.to_string());
+        maps.insert(String::from("size_x"), world.size_x.to_string());
+        maps.insert(String::from("size_y"), world.size_y.to_string());
+        maps.insert(String::from("size_z"), world.size_z.to_string());
+        maps.insert(String::from("directory"), world.directory.to_string());
+        for x in 0..world.size_x {
+            for y in 0..world.size_x {
+                for z in 0..world.size_x {
+                    let map = Map::new_biome(50, 50, Map::random_biome());
+                    let map_name = World::give_map_name(x, y, z);
+                    let mut file_path = world.directory.to_string();
+                    file_path.push_str("/");
+                    file_path.push_str(&map_name);
+                    file_path.push_str(".map");
+                    Map::save_map(&file_path, &map, false);
+                    maps.insert(map_name.to_string(), file_path.to_string());
+                }
+            }
+        }
+        world.maps = maps;
+        World::save_world(&world, false);
+    }
+    fn give_map_name(x: i32, y: i32, z: i32) -> String {
+        let mut file_name = String::from("x");
+        file_name.push_str(&x.to_string());
+        file_name.push_str("y");
+        file_name.push_str(&y.to_string());
+        file_name.push_str("z");
+        file_name.push_str(&z.to_string());
+        file_name
+    }
+    fn add_map (file_name: String, x: i32, y: i32, z: i32) {
+
+    }
+
+    fn get_world_path(world_name: String) -> String {
+        let mut world_path = String::from("/tmp/worlds/");
+        world_path.push_str(&world_name);
+        world_path.push_str("/");
+        world_path.push_str(&world_name);
+        world_path.push_str(".world");
+        world_path
+    }
+    fn load_world (world_name: &str) -> World {
+            let world_path = World::get_world_path(world_name.to_string());
+            let mut f = File::open(world_path).expect("Unable to open file");
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            let maps: HashMap<String, String> = serde_json::from_str(&s).unwrap();
+            let size_x = maps["size_x"].parse::<i32>().unwrap().clone();
+            let size_y = maps["size_y"].parse::<i32>().unwrap().clone();
+            let size_z = maps["size_z"].parse::<i32>().unwrap().clone();
+            let world = World::new(maps["world_name"].clone(), size_x, size_y, size_z);
+            world
+    }
+    // Opens a file for reading to decompress, deserialize, and store as hashmap
+    // pub fn load_world(file_name: &str) -> World {
+    //     let mut f = File::open(filename).expect("Unable to open file");
+    //     let mut s = String::new();
+    //     f.read_to_string(&mut s).unwrap();
+    //     let tileset: HashMap<String, Tile> = serde_json::from_str(&s).unwrap();
+    //     let map = Map::new(tileset);
+    //     map
+    // }
+    //
+    // // Serialize hashmap into string, open a file for writing, write to file with compressed bufwriter
+    pub fn save_world (world: &World, compression: bool) {
+        let serialized = serde_json::to_string(&world.maps).unwrap();
+        let world_path = World::get_world_path(world.world_name.to_string());
+        let f = File::create(world_path).expect("Unable to create file");
+        let enc: flate2::write::GzEncoder<std::fs::File>;
+        // if compression enabled, gzip here
+        if compression {
+            enc = Map::compress(f);
+            let mut buf = BufWriter::new(enc);
+            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
+        } else {
+            //enc = f;
+            let mut buf = BufWriter::new(f);
+            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
+        }
+    }
+}
 
 
 #[gdnative::methods]
@@ -103,6 +245,9 @@ impl Map {
     // Build Map structure
     fn new(tileset: HashMap<String, Tile>) -> Map {
         let map: Map = Map {
+            world_x: 0,
+            world_y: 0,
+            world_z: 0,
             tileset: tileset
         };
         map
@@ -136,6 +281,15 @@ impl Map {
     }
     #[export]
     unsafe fn godot_random_biome(&self, _owner: Node, godot_file_name: GodotString) -> GodotString {
+        let biome_name = Map::random_biome();
+        let file_name = godot_file_name.to_string();
+        let m = Map::new_biome(50, 50, biome_name.clone());
+        Map::save_map(&file_name.to_string(), &m, false);
+        // Return the random biome to godot for logging
+        GodotString::from_str(&biome_name)
+    }
+
+    pub fn random_biome() -> String {
         let mut rng = rand::thread_rng();
         let random_biome = rng.gen_range(0, 5);
         let biome_name;
@@ -152,12 +306,9 @@ impl Map {
         } else {
             biome_name = String::from("Cave");
         }
-        let file_name = godot_file_name.to_string();
-        let m = Map::new_biome(150, 50, biome_name.clone());
-        Map::save_map(&file_name.to_string(), &m, false);
-        // Return the random biome to godot for logging
-        GodotString::from_str(&biome_name)
+        biome_name
     }
+
     #[export] // Specify a map file to read, and a start_tile and end_tile, return path between
     pub fn godot_path_find(&self, _owner: Node, godot_file_name: GodotString, start_tile: GodotString, end_tile: GodotString) -> StringArray {
         // Load map file
@@ -201,9 +352,15 @@ impl Map {
             tileset = Map::add_sparse_trees(sizex, sizey, &biome, tileset);
         }
         // Pass 7: Draw a road
-        if biome.biome_control.roads {
-            tileset = Map::draw_road(sizex, sizey, "25x25".to_string(), "15x15".to_string(), tileset);
+        //if biome.biome_control.roads {
+            // This is debug/testing only (remove completely later)
+            //tileset = Map::draw_road(sizex, sizey, "25x25".to_string(), "15x15".to_string(), tileset);
+        //}
+        // Pass 8: Exits (for infinitely connected maps)
+        if biome.biome_control.exits {
+            //tileset = Map::add_map_exits();
         }
+
         // Pass FINAL: update wall_borders
         if biome.biome_control.outer_wall {
             tileset = Map::add_wall_borders(sizex, sizey, &biome, tileset);
@@ -225,6 +382,18 @@ impl Map {
         map
     }
 
+    // Map needs to know it's position in a map grid (aka a world with a world size?)
+    // Could a Map be used to abstract an entire world? (no z-axis is big issue) (this is a bad idea)
+    // Do I need to create a world before doing infinite map? (I think so... damn)
+    fn add_map_exit(exit_type: String, x: i32, y: i32, mut tileset: HashMap<String,Tile>) -> HashMap<String,Tile> {
+        let mut exit_key = String::from("exit_");
+        exit_key.push_str(&exit_type);
+        let exit_tile = Tile::new(x, y, 'x', Vec::new());
+        tileset.insert(exit_key, exit_tile);
+        tileset
+    }
+
+
     // Create empty tileset of a specific size
     fn empty_tileset (sizex: i32, sizey: i32) -> HashMap<String,Tile> {
         let mut tileset = HashMap::new();
@@ -240,7 +409,7 @@ impl Map {
 
     // This is going to get awful and bloated fast! (maybe rewrite without structs) (think about it)
     // This could become a part of biome? I mean it is used specifically to change based on biome...
-    // Is there good reason?
+    // (enum?)
     fn create_voronoi_points(sizex: i32, sizey: i32, biome: &Biome, number_of_regions: i32) -> Vec<Tile> {
         // Get exact number of tiles needed for each type (from TileChance percentage)
         let number_of_floor = (biome.tile_chance.floor * number_of_regions as f32) as i32;
@@ -500,22 +669,28 @@ impl Biome {
         let biome_control;
         if biome_name == "Cave" {
             tile_chance = TileChance{floor: 0.3, wall: 0.5, water: 0.2, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false,
+                                        roads: false, exit_roads: false, exits: false};
         } else if biome_name == "Ocean" {
             tile_chance = TileChance{floor: 0.0, wall: 0.05, water: 0.7, sand: 0.15, tree: 0.1};
-            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true, roads: false};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true,
+                                        roads: false, exit_roads: false, exits: false};
         } else if biome_name == "Underlake" {
             tile_chance = TileChance{floor: 0.2, wall: 0.2, water: 0.6, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false,
+                                            roads: false, exit_roads: false, exits: false};
         } else if biome_name == "Desert" {
             tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.15, sand: 0.5, tree: 0.15};
-            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true, roads: true};
+            biome_control = BiomeControl{outer_wall: false, water_edges: true, sparse_trees: true,
+                                        roads: false, exit_roads: false, exits: false};
         } else if biome_name == "Forest" {
             tile_chance = TileChance{floor: 0.0, wall: 0.2, water: 0.2, sand: 0.2, tree: 0.4};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: true, roads: true};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: true,
+                                        roads: false, exit_roads: false, exits: false};
         } else {
             tile_chance = TileChance{floor: 0.33, wall: 0.33, water: 0.33, sand: 0.0, tree: 0.0};
-            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false, roads: false};
+            biome_control = BiomeControl{outer_wall: true, water_edges: true, sparse_trees: false,
+                                        roads: false, exit_roads: false, exits: false};
         }
         biome = Biome {
             biome_name: biome_name,
@@ -574,8 +749,9 @@ impl PathMap {
         walkable
     }
 
-    // This is a little hard to read, maybe calculating costs can be shrunk down
-    // A* pathfinding -> returns the shortest_path between two nodes using A* (slow) (goes through walls)
+    // is_walkable could be an enum/struct/something provided to this (control which tiles are walkable on a per path basis)
+    // This is a little hard to read, maybe calculating costs can be shrunk down (separate method for costs)
+    // A* pathfinding -> returns the shortest_path between two tiles using A* (slow) (goes through walls)
     pub fn find_path(start_node: String, end_node: String, mut path_tiles: HashMap<String, PathTile>, tileset: &HashMap<String, Tile>) -> Vec<String> {
         let mut open_list: Vec<String> = Vec::new();
         let mut closed_list: Vec<String> = Vec::new();
