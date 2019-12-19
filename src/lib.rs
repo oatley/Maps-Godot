@@ -155,17 +155,22 @@ impl World {
         maps.insert(String::from("size_y"), world.size_y.to_string());
         maps.insert(String::from("size_z"), world.size_z.to_string());
         maps.insert(String::from("directory"), world.directory.to_string());
-        for x in 0..world.size_x {
-            for y in 0..world.size_x {
-                for z in 0..world.size_x {
-                    let map = Map::new_biome(50, 50, Map::random_biome());
+        let world_size_x = world.size_x.clone();
+        let world_size_y = world.size_y.clone();
+        let world_size_z = world.size_z.clone();
+        for x in 0..world_size_x {
+            for y in 0..world_size_y {
+                for z in 0..world_size_z {
+                    let mut map = Map::new_biome(50, 50, Map::random_biome());
+                    map = map.update_world_position(x, y, z);
                     let map_name = World::give_map_name(x, y, z);
-                    let mut file_path = world.directory.to_string();
-                    file_path.push_str("/");
-                    file_path.push_str(&map_name);
-                    file_path.push_str(".map");
-                    Map::save_map(&file_path, &map, false);
-                    maps.insert(map_name.to_string(), file_path.to_string());
+                    let map_path = world.get_map_path(map_name.to_string());
+                    // let mut file_path = world.directory.to_string();
+                    // file_path.push_str("/");
+                    // file_path.push_str(&map_name);
+                    // file_path.push_str(".map");
+                    Map::save_map(&map_path, &map, false);
+                    maps.insert(map_name.to_string(), map_path.to_string());
                 }
             }
         }
@@ -185,14 +190,7 @@ impl World {
 
     }
 
-    fn get_world_path(world_name: String) -> String {
-        let mut world_path = String::from("/tmp/worlds/");
-        world_path.push_str(&world_name);
-        world_path.push_str("/");
-        world_path.push_str(&world_name);
-        world_path.push_str(".world");
-        world_path
-    }
+
     fn load_world (world_name: &str) -> World {
             let world_path = World::get_world_path(world_name.to_string());
             let mut f = File::open(world_path).expect("Unable to open file");
@@ -232,6 +230,41 @@ impl World {
             buf.write_all(serialized.as_bytes()).expect("Unable to write data");
         }
     }
+
+    // Connect exits to neighbor maps args: (map1, map2) -> modify both maps with exits
+
+    // Check if a path exists between all exits on a map -> true/false
+
+    // Check map position, check neighbors, calculate max possible exits
+    fn max_exits(&self, map_name: String) {
+        let map_path = self.get_map_path(map_name.to_string());
+        let map = Map::load_map(&map_path, self.compress_maps);
+        let exit_keys = vec!["exit_north", "exit_east", "exit_south", "exit_west", "exit_up", "exit_down"];
+
+        //let mut tileset = map.tileset;
+
+    }
+    // look at position in world grid and see what neighbors exist
+    fn available_exits(&self, map_name: String) {
+
+    }
+    // Get the map file_path from the map_name String
+    fn get_map_path(&self, map_name: String) -> String {
+        let mut map_path = self.directory.to_string();
+        map_path.push_str("/maps/");
+        map_path.push_str(&map_name);
+        map_path.push_str(".map");
+        map_path
+    }
+    fn get_world_path(world_name: String) -> String {
+        let mut world_path = String::from("/tmp/worlds/");
+        world_path.push_str(&world_name);
+        world_path.push_str("/");
+        world_path.push_str(&world_name);
+        world_path.push_str(".world");
+        world_path
+    }
+
 }
 
 
@@ -248,6 +281,19 @@ impl Map {
             world_x: 0,
             world_y: 0,
             world_z: 0,
+            tileset: tileset
+        };
+        map
+    }
+    fn update_world_position(self, x: i32, y: i32, z: i32) -> Map {
+        let mut tileset = self.tileset;
+        tileset.insert(String::from("world_x"), Tile::new(x, x, '$', Vec::new()));
+        tileset.insert(String::from("world_y"), Tile::new(y, y, '$', Vec::new()));
+        tileset.insert(String::from("world_z"), Tile::new(z, z, '$', Vec::new()));
+        let map: Map = Map {
+            world_x: x,
+            world_y: y,
+            world_z: z,
             tileset: tileset
         };
         map
