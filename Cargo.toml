@@ -4,16 +4,16 @@ version = "0.1.0"
 authors = ["Andrew Oatley-Willis <oatleywillisa@gmail.com>"]
 edition = "2018"
 
-# [lib]
-# crate-type = ["cdylib"]
+[lib]
+crate-type = ["cdylib"]
 
 # Debug only
-[lib]
-name = "maps"
-path = "src/lib.rs"
-[[bin]]
-name = "maps"
-path = "src/main.rs"
+# [lib]
+# name = "maps"
+# path = "src/lib.rs"
+# [[bin]]
+# name = "maps"
+# path = "src/main.rs"
 
 
 [dependencies]
