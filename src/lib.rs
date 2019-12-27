@@ -175,79 +175,55 @@ impl World {
                 }
             }
         }
+        // Might not want this... maybe give it to a method that chooses appropriate exits from available
+        // If you do this, reading the maps from world in engine would require regex filtering ;-;
+        // maps.extend(world.get_all_exits());
         world.maps = maps;
         World::save_world(&world, false);
     }
-    // Translate xyz coordinates into a map_key for world.maps
-    fn get_map_name(x: i32, y: i32, z: i32) -> String {
-        let mut file_name = String::from("x");
-        file_name.push_str(&x.to_string());
-        file_name.push_str("y");
-        file_name.push_str(&y.to_string());
-        file_name.push_str("z");
-        file_name.push_str(&z.to_string());
-        file_name
-    }
+
     fn add_map (file_name: String, x: i32, y: i32, z: i32) {
 
     }
-
-
-    fn load_world (world_name: &str) -> World {
-            let world_path = World::get_world_path(world_name.to_string());
-            let mut f = File::open(world_path).expect("Unable to open file");
-            let mut s = String::new();
-            f.read_to_string(&mut s).unwrap();
-            let maps: HashMap<String, String> = serde_json::from_str(&s).unwrap();
-            let size_x = maps["size_x"].parse::<i32>().unwrap().clone();
-            let size_y = maps["size_y"].parse::<i32>().unwrap().clone();
-            let size_z = maps["size_z"].parse::<i32>().unwrap().clone();
-            let world = World::new(maps["world_name"].clone(), size_x, size_y, size_z);
-            world
-    }
-    // Opens a file for reading to decompress, deserialize, and store as hashmap
-    // pub fn load_world(file_name: &str) -> World {
-    //     let mut f = File::open(filename).expect("Unable to open file");
-    //     let mut s = String::new();
-    //     f.read_to_string(&mut s).unwrap();
-    //     let tileset: HashMap<String, Tile> = serde_json::from_str(&s).unwrap();
-    //     let map = Map::new(tileset);
-    //     map
-    // }
-    //
-    // // Serialize hashmap into string, open a file for writing, write to file with compressed bufwriter
-    pub fn save_world (world: &World, compression: bool) {
-        let serialized = serde_json::to_string(&world.maps).unwrap();
-        let world_path = World::get_world_path(world.world_name.to_string());
-        let f = File::create(world_path).expect("Unable to create file");
-        let enc: flate2::write::GzEncoder<std::fs::File>;
-        // if compression enabled, gzip here
-        if compression {
-            enc = Map::compress(f);
-            let mut buf = BufWriter::new(enc);
-            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
-        } else {
-            //enc = f;
-            let mut buf = BufWriter::new(f);
-            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
-        }
-    }
-
     // Connect exits to neighbor maps args: (map1, map2) -> modify both maps with exits
 
     // Check if a path exists between all exits on a map -> true/false
 
-    // Check map position, check neighbors, calculate max possible exits
-    fn max_exits(&self, map_name: String) {
+
+    // Possibly store map exits in the map itself and ignore the world?
+    fn add_map_exits(&self) {
+        for map_name in self.maps.keys() { // Loop through all maps
+            // Get path_name for map file
+            let map_path = self.get_map_path(map_name.to_string());
+            // Load map
+            let map = Map::load_map(&map_path, self.compress_maps);
+            // modify the map to add exits
+            // change tile on map to be a floor?
+            // add metadata exit info?
+            // AHHHHHHHHHHHHH
+            // Save changes
+            Map::save_map(&map_path, &map, false);
+        }
+    }
+
+    // Return the exits for every map in world
+    fn get_all_exits (&self) -> HashMap<String,String> {
+        let mut all_map_exits: HashMap<String,String> = HashMap::new();
+        for map in self.maps.keys() {
+            let mut available_exits = self.available_exits(map.to_string());
+            all_map_exits.extend(available_exits);
+        }
+        all_map_exits
+    }
+    // Check map position, check neighbors, calculate max possible exits (useless?)
+    fn max_exits(&self, map_name: String) -> i32 {
         let map_path = self.get_map_path(map_name.to_string());
         let map = Map::load_map(&map_path, self.compress_maps);
-        let exit_keys = vec!["exit_north", "exit_east", "exit_south", "exit_west", "exit_above", "exit_below"];
-
-        //let mut tileset = map.tileset;
-
+        let available_exits = self.available_exits(map_name.to_string());
+        available_exits.keys().len() as i32
     }
-    // look at position in world grid and see what neighbors exist
-    fn available_e (&self, map_name: String) -> HashMap<String,String> {
+    // Look at position in world grid and see what neighbors exist
+    fn available_exits (&self, map_name: String) -> HashMap<String,String> {
         let mut available_exits: HashMap<String,String> = HashMap::new();
         available_exits.extend(self.available_exits_x(map_name.to_string()));
         available_exits.extend(self.available_exits_y(map_name.to_string()));
@@ -261,12 +237,12 @@ impl World {
         let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
         let mut available_exit_maps = HashMap::new();
         if map.world_x < world_size_x && map.world_x > -world_size_x { // 2 x neighbors
-            available_exit_maps.insert(map_name.to_string() + "exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
-            available_exit_maps.insert(map_name.to_string() + "exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
         } else if map.world_x == world_size_x { // only west side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
         } else if map.world_x == -world_size_x { // only east side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
         }
         available_exit_maps
     }
@@ -277,29 +253,40 @@ impl World {
         let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
         let mut available_exit_maps = HashMap::new();
         if map.world_y < world_size_y && map.world_y > -world_size_y { // 2 y neighbors
-            available_exit_maps.insert(map_name.to_string() + "exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
-            available_exit_maps.insert(map_name.to_string() + "exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
         } else if map.world_y == world_size_y { // only south side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
         } else if map.world_y == -world_size_y { // only north side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "_exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
         }
         available_exit_maps
     }
+    // Return neighbor maps on z axis
     fn available_exits_z(&self, map_name: String) -> HashMap<String,String> {
         let world_size_z = self.size_z;
         let map_path = self.get_map_path(map_name.to_string());
         let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
         let mut available_exit_maps = HashMap::new();
         if map.world_z < world_size_z && map.world_z > -world_size_z { // 2 z neighbors
-            available_exit_maps.insert(map_name.to_string() + "exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
-            available_exit_maps.insert(map_name.to_string() + "exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
+            available_exit_maps.insert(map_name.to_string() + "_exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
+            available_exit_maps.insert(map_name.to_string() + "_exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
         } else if map.world_z == world_size_z { // only below side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
+            available_exit_maps.insert(map_name.to_string() + "_exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
         } else if map.world_z == -world_size_z { // only above side neighbor
-            available_exit_maps.insert(map_name.to_string() + "exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
+            available_exit_maps.insert(map_name.to_string() + "_exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
         }
         available_exit_maps
+    }
+    // Translate xyz coordinates into a map_key for world.maps
+    fn get_map_name(x: i32, y: i32, z: i32) -> String {
+        let mut file_name = String::from("x");
+        file_name.push_str(&x.to_string());
+        file_name.push_str("y");
+        file_name.push_str(&y.to_string());
+        file_name.push_str("z");
+        file_name.push_str(&z.to_string());
+        file_name
     }
     // Get the map file_path from the map_name String
     fn get_map_path(&self, map_name: String) -> String {
@@ -309,6 +296,7 @@ impl World {
         map_path.push_str(".map");
         map_path
     }
+    // Return absolute path to world file
     fn get_world_path(world_name: String) -> String {
         let mut world_path = String::from("/tmp/worlds/");
         world_path.push_str(&world_name);
@@ -317,7 +305,35 @@ impl World {
         world_path.push_str(".world");
         world_path
     }
-
+    // Serialize hashmap into string, open a file for writing, write to file with compressed bufwriter
+    pub fn save_world (world: &World, compression: bool) {
+        let serialized = serde_json::to_string(&world.maps).unwrap();
+        let world_path = World::get_world_path(world.world_name.to_string());
+        let f = File::create(world_path).expect("Unable to create file");
+        let enc: flate2::write::GzEncoder<std::fs::File>;
+        // if compression enabled, gzip here
+        if compression {
+            enc = Map::compress(f);
+            let mut buf = BufWriter::new(enc);
+            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
+        } else {
+            let mut buf = BufWriter::new(f);
+            buf.write_all(serialized.as_bytes()).expect("Unable to write data");
+        }
+    }
+    // Load world file into new world
+    fn load_world (world_name: &str) -> World {
+        let world_path = World::get_world_path(world_name.to_string());
+        let mut f = File::open(world_path).expect("Unable to open file");
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        let maps: HashMap<String, String> = serde_json::from_str(&s).unwrap();
+        let size_x = maps["size_x"].parse::<i32>().unwrap().clone();
+        let size_y = maps["size_y"].parse::<i32>().unwrap().clone();
+        let size_z = maps["size_z"].parse::<i32>().unwrap().clone();
+        let world = World::new(maps["world_name"].clone(), size_x, size_y, size_z);
+        world
+    }
 }
 
 

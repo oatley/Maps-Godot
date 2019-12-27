@@ -25,7 +25,7 @@ var semaphore
 var file_name
 var exit_thread
 var thread_busy = false
-var max_maps_to_generate = 1
+var max_maps_to_generate = 5
 
 # Timer to run thread ever 20 seconds
 var timer = 0.0
@@ -196,7 +196,7 @@ func exists(f):
     return true
   return false
   
-#little rewirte to include file checks
+#little rewirte to include file checks (nope)
 func detect_old_maps():
   var map_count= len(map_store)
   var map_path = "resources/maps/"
@@ -212,15 +212,15 @@ func gen_map():
   var map_name = "f" + str(map_count)
   mutex.lock()
   map_store[map_name] = {}
-  map_store[map_name]["ready"] = false # Fix123
+  map_store[map_name]["ready"] = false 
   mutex.unlock()
   #gen_map.godot_new_map(map_path + map_name + ".map")
-  var biome = "Forest"
-  gen_map.godot_new_biome(map_path + map_name + ".map", biome)
-  #var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
+  #var biome = "Forest"
+  #gen_map.godot_new_biome(map_path + map_name + ".map", biome)
+  var biome = gen_map.godot_random_biome(map_path + map_name + ".map")
   mutex.lock()
-  map_store[map_name]["biome"] = biome # Fix123
-  map_store[map_name]["ready"] = true # Fix123
+  map_store[map_name]["biome"] = biome 
+  map_store[map_name]["ready"] = true 
   mutex.unlock()
   print("[THREAD_gen_map]-> ", map_store)
   #gen_map.godot_save_map(rust_map_name)
