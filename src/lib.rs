@@ -18,11 +18,15 @@ use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
 use flate2::Compression;
 
-// Priority Todo:
-// - Compile a library for use with godot, this library will not be updated, must make basic maps
+// Priority To do:
+// - Get worlds working
+// -- method add exits to maps on correct sides
+// -- method returns sides available_exits
+// -- double check loading/saving (getting complex, multiple levels of file reading/writing)
+// -- test old map gen isn't broken without worlds
+// -- need a world map visualization
 
-
-// To do:
+// To do (Long term):
 // - After refactor and crate separation: Javascript/webassembly front end map viewer using godot tiles
 // - Might be good to separate into multiple crates soon
 // - Store biome control and tile chance inside Map (probably not)
@@ -124,7 +128,7 @@ pub struct World {
     pub size_z: i32, // Use z to make a giant tower
     pub directory: String,
     pub compress_maps: bool,
-    pub maps: HashMap<String, String> // location(xyz) and file_name
+    pub maps: HashMap<String, String> // location(xyz) and file_name / key_south -> neighbor_key?
 }
 
 // Save world in a directory
@@ -146,8 +150,9 @@ impl World {
         maps.insert(String::from("directory"), directory.to_string());
         World {world_name: world_name, size_x: size_x, size_y: size_y, size_z: size_z, directory: directory, compress_maps: false, maps: maps}
     }
-    // Test a cube 3x3x3 world
+    // Test a cube 5x5x5 world
     pub fn new_world_test() {
+        // this is dumb, just change it to -3 -> 3 (completely inclusive)
         let mut world = World::new(String::from("meow"), 3, 3, 3);
         let mut maps = HashMap::new();
         maps.insert(String::from("world_name"), world.world_name.to_string());
@@ -158,17 +163,13 @@ impl World {
         let world_size_x = world.size_x.clone();
         let world_size_y = world.size_y.clone();
         let world_size_z = world.size_z.clone();
-        for x in 0..world_size_x {
-            for y in 0..world_size_y {
-                for z in 0..world_size_z {
+        for x in -world_size_x..world_size_x+1 {
+            for y in -world_size_y..world_size_y+1 {
+                for z in -world_size_z..world_size_z+1 {
                     let mut map = Map::new_biome(50, 50, Map::random_biome());
-                    map = map.update_world_position(x, y, z);
-                    let map_name = World::give_map_name(x, y, z);
+                    map = map.add_world_pos_to_map(x, y, z);
+                    let map_name = World::get_map_name(x, y, z);
                     let map_path = world.get_map_path(map_name.to_string());
-                    // let mut file_path = world.directory.to_string();
-                    // file_path.push_str("/");
-                    // file_path.push_str(&map_name);
-                    // file_path.push_str(".map");
                     Map::save_map(&map_path, &map, false);
                     maps.insert(map_name.to_string(), map_path.to_string());
                 }
@@ -177,7 +178,8 @@ impl World {
         world.maps = maps;
         World::save_world(&world, false);
     }
-    fn give_map_name(x: i32, y: i32, z: i32) -> String {
+    // Translate xyz coordinates into a map_key for world.maps
+    fn get_map_name(x: i32, y: i32, z: i32) -> String {
         let mut file_name = String::from("x");
         file_name.push_str(&x.to_string());
         file_name.push_str("y");
@@ -239,14 +241,65 @@ impl World {
     fn max_exits(&self, map_name: String) {
         let map_path = self.get_map_path(map_name.to_string());
         let map = Map::load_map(&map_path, self.compress_maps);
-        let exit_keys = vec!["exit_north", "exit_east", "exit_south", "exit_west", "exit_up", "exit_down"];
+        let exit_keys = vec!["exit_north", "exit_east", "exit_south", "exit_west", "exit_above", "exit_below"];
 
         //let mut tileset = map.tileset;
 
     }
     // look at position in world grid and see what neighbors exist
-    fn available_exits(&self, map_name: String) {
-
+    fn available_e (&self, map_name: String) -> HashMap<String,String> {
+        let mut available_exits: HashMap<String,String> = HashMap::new();
+        available_exits.extend(self.available_exits_x(map_name.to_string()));
+        available_exits.extend(self.available_exits_y(map_name.to_string()));
+        available_exits.extend(self.available_exits_z(map_name.to_string()));
+        available_exits
+    }
+    // Return neighbor maps on x axis
+    fn available_exits_x(&self, map_name: String) -> HashMap<String,String> {
+        let world_size_x = self.size_x;
+        let map_path = self.get_map_path(map_name.to_string());
+        let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
+        let mut available_exit_maps = HashMap::new();
+        if map.world_x < world_size_x && map.world_x > -world_size_x { // 2 x neighbors
+            available_exit_maps.insert(map_name.to_string() + "exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
+        } else if map.world_x == world_size_x { // only west side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_west", World::get_map_name(map.world_x-1, map.world_y, map.world_z));
+        } else if map.world_x == -world_size_x { // only east side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_east", World::get_map_name(map.world_x+1, map.world_y, map.world_z));
+        }
+        available_exit_maps
+    }
+    // Return neighbor maps on y axis
+    fn available_exits_y(&self, map_name: String) -> HashMap<String,String> {
+        let world_size_y = self.size_y;
+        let map_path = self.get_map_path(map_name.to_string());
+        let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
+        let mut available_exit_maps = HashMap::new();
+        if map.world_y < world_size_y && map.world_y > -world_size_y { // 2 y neighbors
+            available_exit_maps.insert(map_name.to_string() + "exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
+            available_exit_maps.insert(map_name.to_string() + "exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
+        } else if map.world_y == world_size_y { // only south side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_south", World::get_map_name(map.world_x, map.world_y-1, map.world_z));
+        } else if map.world_y == -world_size_y { // only north side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_north", World::get_map_name(map.world_x, map.world_y+1, map.world_z));
+        }
+        available_exit_maps
+    }
+    fn available_exits_z(&self, map_name: String) -> HashMap<String,String> {
+        let world_size_z = self.size_z;
+        let map_path = self.get_map_path(map_name.to_string());
+        let map = Map::load_map(&map_path, false); // Fixes map.world_x/y/z
+        let mut available_exit_maps = HashMap::new();
+        if map.world_z < world_size_z && map.world_z > -world_size_z { // 2 z neighbors
+            available_exit_maps.insert(map_name.to_string() + "exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
+            available_exit_maps.insert(map_name.to_string() + "exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
+        } else if map.world_z == world_size_z { // only below side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_below", World::get_map_name(map.world_x, map.world_y, map.world_z-1));
+        } else if map.world_z == -world_size_z { // only above side neighbor
+            available_exit_maps.insert(map_name.to_string() + "exit_above", World::get_map_name(map.world_x, map.world_y, map.world_z+1));
+        }
+        available_exit_maps
     }
     // Get the map file_path from the map_name String
     fn get_map_path(&self, map_name: String) -> String {
@@ -275,7 +328,7 @@ impl Map {
         let m = Map::new_biome(50, 50, String::from("Forest"));
         Map::save_map("/tmp/maps/test101.map", &m, false);
     }
-    // Build Map structure
+    // Build Map structure (fix the world positions later)
     fn new(tileset: HashMap<String, Tile>) -> Map {
         let map: Map = Map {
             world_x: 0,
@@ -285,8 +338,23 @@ impl Map {
         };
         map
     }
-    fn update_world_position(self, x: i32, y: i32, z: i32) -> Map {
-        let mut tileset = self.tileset;
+    // Pull world position out of tileset for convenience (messy) (uses Tile for storage)
+    fn fix_map_world_position(self) -> Map {
+        let tileset = self.tileset; // Move tileset out
+        let x = tileset["world_x"].x.clone(); // Value stored in Tile.x/y
+        let y = tileset["world_y"].x.clone(); // Value stored in Tile.x/y
+        let z = tileset["world_z"].x.clone(); // Tile has no z
+        let map: Map = Map {
+            world_x: x,
+            world_y: y,
+            world_z: z,
+            tileset: tileset
+        };
+        map
+    }
+    // Add maps world position to tileset and map (messy) (uses Tile for storage)
+    fn add_world_pos_to_map(self, x: i32, y: i32, z: i32) -> Map {
+        let mut tileset = self.tileset; // Move tileset out
         tileset.insert(String::from("world_x"), Tile::new(x, x, '$', Vec::new()));
         tileset.insert(String::from("world_y"), Tile::new(y, y, '$', Vec::new()));
         tileset.insert(String::from("world_z"), Tile::new(z, z, '$', Vec::new()));
@@ -421,7 +489,10 @@ impl Map {
         tileset.insert(String::from("mapsize"), map_size);
         tileset.insert(String::from("default_floor"), default_floor);
         tileset.insert(String::from("default_wall"), default_wall);
-
+        // Some placeholder garbage for worlds
+        tileset.insert(String::from("world_x"), Tile::new(0, 0, '$', Vec::new()));
+        tileset.insert(String::from("world_y"), Tile::new(0, 0, '$', Vec::new()));
+        tileset.insert(String::from("world_z"), Tile::new(0, 0, '$', Vec::new()));
 
         // Build Map structure
         let map = Map::new(tileset);
@@ -620,7 +691,8 @@ impl Map {
         }
         //GzDecoder::new(f).read_to_string(&mut s).unwrap();
         let tileset: HashMap<String, Tile> = serde_json::from_str(&s).unwrap();
-        let map = Map::new(tileset);
+        let mut map = Map::new(tileset);
+        map = map.fix_map_world_position();
         map
     }
 
